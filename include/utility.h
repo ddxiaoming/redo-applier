@@ -60,4 +60,38 @@ advanced by the number of bytes consumed, or set nullptr if out of space
 @return unsigned value */
 uint64_t mach_u64_parse_compressed(const byte**	ptr, const byte*	end_ptr);
 
+
+/**
+The following function is used to store data in one byte. */
+inline void mach_write_to_1(byte*	b, byte n) {
+  b[0] = static_cast<byte>(n);
+}
+
+/**
+The following function is used to store data in two consecutive
+bytes. We store the most significant byte to the lowest address. */
+inline void mach_write_to_2(byte*	b, uint16_t n) {
+  b[0] = static_cast<byte>(n >> 8);
+  b[1] = static_cast<byte>(n);
+}
+/*******************************************************//**
+The following function is used to store data in four consecutive
+bytes. We store the most significant byte to the lowest address. */
+inline void mach_write_to_4(byte*	b, uint32_t n) {
+  b[0] = (byte)(n >> 24);
+  b[1] = (byte)(n >> 16);
+  b[2] = (byte)(n >> 8);
+  b[3] = (byte) n;
+}
+
+inline void mach_write_to_8(void* b, uint64_t n) {
+  mach_write_to_4(static_cast<byte*>(b), static_cast<uint32_t>(n >> 32));
+  mach_write_to_4(static_cast<byte*>(b) + 4, static_cast<uint32_t>(n));
+}
+
+inline uint16_t mach_encode_2(uint16_t n) {
+  uint16_t	ret;
+  mach_write_to_2((byte*) &ret, n);
+  return ret;
+}
 }

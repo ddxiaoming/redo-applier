@@ -122,7 +122,7 @@ enum LOG_TYPE : uint8_t {
   MLOG_DUMMY_RECORD = 32,
 
   /** log record about an .ibd file creation */
-  //MLOG_FILE_CREATE = 33,
+//  MLOG_FILE_CREATE = 33,
 
   /** rename databasename/tablename (no .ibd file name suffix) */
   //MLOG_FILE_RENAME = 34,
@@ -257,4 +257,99 @@ static constexpr unsigned char infimum_supremum_compact[] = {
 static constexpr uint32_t SIZE_OF_MLOG_CHECKPOINT = 9;
 
 static constexpr uint32_t DATA_ROLL_PTR_LEN = 7;
+
+// undo log相关的常量
+static constexpr uint32_t TRX_UNDO_PAGE_HDR = 38U;
+static constexpr uint32_t	TRX_UNDO_PAGE_TYPE = 0;
+static constexpr uint32_t	TRX_UNDO_PAGE_START = 2;
+static constexpr uint32_t TRX_UNDO_PAGE_FREE = 4;
+static constexpr uint32_t TRX_UNDO_PAGE_HDR_SIZE = 6 + 2 * 6;
+static constexpr uint32_t FIL_PAGE_DATA_END = 8;
+static constexpr uint32_t	TRX_UNDO_SEG_HDR = (TRX_UNDO_PAGE_HDR + TRX_UNDO_PAGE_HDR_SIZE);
+static constexpr uint32_t	TRX_UNDO_LAST_LOG = 2;
+static constexpr uint32_t TRX_UNDO_NEXT_LOG = 30;
+static constexpr uint32_t TRX_UNDO_PREV_LOG = 32;
+static constexpr uint32_t	TRX_UNDO_INSERT = 1;
+static constexpr uint32_t TRX_UNDO_UPDATE = 2;
+static constexpr uint32_t TRX_UNDO_STATE = 0;
+static constexpr uint32_t TRX_UNDO_ACTIVE = 1;
+static constexpr uint32_t TRX_UNDO_CACHED = 2;
+static constexpr uint32_t	TRX_UNDO_TO_FREE = 3;
+static constexpr uint32_t TRX_UNDO_TO_PURGE = 4;
+static constexpr uint32_t	TRX_UNDO_PREPARED = 5;
+
+static constexpr uint32_t TRX_UNDO_LOG_OLD_HDR_SIZE = 34 + 2 * 6;
+
+
+
+static constexpr uint32_t REC_OLD_INFO_BITS = 6;
+static constexpr uint32_t REC_NEW_INFO_BITS = 5;
+static constexpr uint32_t REC_INFO_BITS_MASK = 0xF0UL;
+static constexpr uint32_t REC_INFO_BITS_SHIFT = 0;
+static constexpr uint32_t REC_INFO_MIN_REC_FLAG = 0x10UL;
+static constexpr uint32_t REC_INFO_DELETED_FLAG = 0x20UL;
+
+// page相关的常量
+static constexpr uint32_t PAGE_DIR = FIL_PAGE_DATA_END;
+static constexpr uint32_t	PAGE_DIR_SLOT_SIZE = 2;
+static constexpr uint32_t PAGE_N_DIR_SLOTS = 0;
+static constexpr uint32_t	PAGE_LAST_INSERT = 10;
+static constexpr uint32_t	PAGE_INDEX_ID = 28;
+static constexpr uint32_t FIL_PAGE_DATA = 38U;
+static constexpr uint32_t FSEG_PAGE_DATA = FIL_PAGE_DATA;
+static constexpr uint32_t	PAGE_HEADER = FSEG_PAGE_DATA;
+static constexpr uint32_t REC_OLD_N_OWNED	= 6;	/* This is single byte bit-field */
+static constexpr uint32_t REC_NEW_N_OWNED = 5;	/* This is single byte bit-field */
+static constexpr uint32_t REC_N_OWNED_MASK = 0xFUL;
+static constexpr uint32_t REC_N_OWNED_SHIFT = 0;
+static constexpr uint32_t REC_NEXT = 2;
+// trx相关的常量
+static constexpr uint32_t XIDDATASIZE = 128;
+static constexpr uint32_t	TRX_UNDO_XA_FORMAT = (TRX_UNDO_LOG_OLD_HDR_SIZE);
+static constexpr uint32_t	TRX_UNDO_XA_TRID_LEN = (TRX_UNDO_XA_FORMAT + 4);
+static constexpr uint32_t	TRX_UNDO_XA_BQUAL_LEN = (TRX_UNDO_XA_TRID_LEN + 4);
+static constexpr uint32_t	TRX_UNDO_XA_XID = (TRX_UNDO_XA_BQUAL_LEN + 4);
+static constexpr uint32_t TRX_UNDO_LOG_XA_HDR_SIZE = (TRX_UNDO_XA_XID + XIDDATASIZE);
+static constexpr uint32_t TRX_UNDO_TRX_ID = 0;
+static constexpr uint32_t	TRX_UNDO_TRX_NO = 8;
+static constexpr uint32_t TRX_UNDO_DEL_MARKS = 16;
+static constexpr uint32_t TRX_UNDO_LOG_START = 18;
+static constexpr uint32_t	TRX_UNDO_XID_EXISTS = 20;
+static constexpr uint32_t TRX_UNDO_DICT_TRANS = 21;
+static constexpr uint32_t FSEG_HEADER_SIZE = 10;
+static constexpr uint32_t	FIL_ADDR_SIZE = 6;
+static constexpr uint32_t FLST_BASE_NODE_SIZE	(4 + 2 * FIL_ADDR_SIZE);
+static constexpr uint32_t TRX_UNDO_SEG_HDR_SIZE = (4 + FSEG_HEADER_SIZE + FLST_BASE_NODE_SIZE);
+// page的类型
+/** File page types (values of FIL_PAGE_TYPE) @{ */
+static constexpr uint32_t FIL_PAGE_INDEX = 17855;	/*!< B-tree node */
+static constexpr uint32_t FIL_PAGE_RTREE= 17854;	/*!< B-tree node */
+static constexpr uint32_t FIL_PAGE_UNDO_LOG = 2;	/*!< Undo log page */
+static constexpr uint32_t FIL_PAGE_INODE = 3;	/*!< Index node */
+static constexpr uint32_t FIL_PAGE_IBUF_FREE_LIST = 4;	/*!< Insert buffer free list */
+/* File page types introduced in MySQL/InnoDB 5.1.7 */
+static constexpr uint32_t FIL_PAGE_TYPE_ALLOCATED = 0;	/*!< Freshly allocated page */
+static constexpr uint32_t FIL_PAGE_IBUF_BITMAP = 5;	/*!< Insert buffer bitmap */
+static constexpr uint32_t FIL_PAGE_TYPE_SYS = 6;	/*!< System page */
+static constexpr uint32_t FIL_PAGE_TYPE_TRX_SYS = 7;	/*!< Transaction system data */
+static constexpr uint32_t FIL_PAGE_TYPE_FSP_HDR = 8;	/*!< File space header */
+static constexpr uint32_t FIL_PAGE_TYPE_XDES = 9;	/*!< Extent descriptor page */
+static constexpr uint32_t FIL_PAGE_TYPE_BLOB = 10;	/*!< Uncompressed BLOB page */
+static constexpr uint32_t FIL_PAGE_TYPE_ZBLOB = 11;	/*!< First compressed BLOB page */
+static constexpr uint32_t FIL_PAGE_TYPE_ZBLOB2 = 12;	/*!< Subsequent compressed BLOB page */
+static constexpr uint32_t FIL_PAGE_TYPE_UNKNOWN = 13;	/*!< In old tablespaces, garbage
+					in FIL_PAGE_TYPE is replaced with this
+					value when flushing pages. */
+static constexpr uint32_t FIL_PAGE_COMPRESSED = 14;	/*!< Compressed page */
+static constexpr uint32_t FIL_PAGE_ENCRYPTED = 15;	/*!< Encrypted page */
+static constexpr uint32_t FIL_PAGE_COMPRESSED_AND_ENCRYPTED = 16;
+/*!< Compressed and Encrypted page */
+static constexpr uint32_t FIL_PAGE_ENCRYPTED_RTREE = 17;	/*!< Encrypted R-tree page */
+
+/** Used by i_s.cc to index into the text description. */
+static constexpr uint32_t FIL_PAGE_TYPE_LAST = FIL_PAGE_TYPE_UNKNOWN;
+
+static constexpr uint32_t FIL_PAGE_TYPE = 24;
+
+
 }
