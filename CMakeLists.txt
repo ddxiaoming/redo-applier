@@ -9,6 +9,8 @@ set(SOURCE_FILE
         ${PROJECT_SOURCE_DIR}/src/page/page.cpp
         ${PROJECT_SOURCE_DIR}/src/page/page_layout.cpp
         ${PROJECT_SOURCE_DIR}/src/utility/utility.cpp
+        ${PROJECT_SOURCE_DIR}/src/buffer/buffer_pool.cpp
         )
 add_executable(Applier ${SOURCE_FILE})
 target_include_directories(Applier PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(Applier fmt)

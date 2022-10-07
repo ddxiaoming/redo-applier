@@ -217,7 +217,7 @@ const char* GetLogString(LOG_TYPE type) {
   }
 }
 
-uint32_t mach_parse_compressed(const byte **ptr, const byte*	end_ptr) {
+uint32_t mach_parse_compressed(const byte **ptr, const byte* end_ptr) {
   if (*ptr >= end_ptr) {
     *ptr = nullptr;
     return 0;
