@@ -123,7 +123,7 @@ enum LOG_TYPE : uint8_t {
   MLOG_DUMMY_RECORD = 32,
 
   /** log record about an .ibd file creation */
-//  MLOG_FILE_CREATE = 33,
+  //MLOG_FILE_CREATE = 33,
 
   /** rename databasename/tablename (no .ibd file name suffix) */
   //MLOG_FILE_RENAME = 34,

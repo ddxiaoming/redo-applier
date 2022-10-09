@@ -110,7 +110,6 @@ bool ApplySystem::PopulateHashMap() {
   // 2.从parse buffer中循环解析日志，放到哈希表中
   unsigned char *end_ptr = parse_buf_ + parse_buf_content_size_;
   unsigned char *start_ptr = parse_buf_;
-//  static int i = 0;
   while (start_ptr < end_ptr) {
     uint32_t len = 0, space_id, page_id;
     LOG_TYPE	type;
@@ -126,7 +125,6 @@ bool ApplySystem::PopulateHashMap() {
 //    ofs << "type = " << GetLogString(type)
 //        << ", space_id = " << space_id << ", page_id = "
 //        << page_id << ", data_len = " << len << std::endl;
-//    ++i;
   }
 
 
