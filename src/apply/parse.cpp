@@ -1,6 +1,8 @@
 #include "parse.h"
 #include "utility.h"
 #include "config.h"
+#include "buffer_pool.h"
+#include "bean.h"
 #include <cassert>
 #include <cstring>
 #include <iostream>
@@ -90,38 +92,38 @@ static byte* PARSE_MLOG_TRUNCATE(byte* start_ptr, const byte*	end_ptr, space_id_
 /**
 Parses a MLOG_*BYTES log record.
 @return parsed record end, nullptr if not a complete record or a corrupt record */
-static byte* ParseOrApplyNBytes(LOG_TYPE type, const byte* ptr, const byte*	end_ptr, byte *page) {
+byte* ParseOrApplyNBytes(LOG_TYPE type, const byte* log_body_start_ptr, const byte*	log_body_end_ptr, byte *page) {
   uint16_t offset;
   uint32_t val;
   assert(type <= MLOG_8BYTES);
-  if (end_ptr < ptr + 2) {
+  if (log_body_end_ptr < log_body_start_ptr + 2) {
     return nullptr;
   }
 
   // 读出偏移量
-  offset = mach_read_from_2(ptr);
-  ptr += 2;
+  offset = mach_read_from_2(log_body_start_ptr);
+  log_body_start_ptr += 2;
 
   if (offset >= DATA_PAGE_SIZE) {
     return nullptr;
   }
 
   if (type == MLOG_8BYTES) {
-    auto dval = mach_u64_parse_compressed(&ptr, end_ptr);
-    if (ptr == nullptr) {
+    auto dval = mach_u64_parse_compressed(&log_body_start_ptr, log_body_end_ptr);
+    if (log_body_start_ptr == nullptr) {
       return nullptr;
     }
     // 对MLOG_8BYTES类型的日志进行Apply
     if (page) {
       mach_write_to_8(page + offset, dval);
     }
-    return const_cast<byte*>(ptr);
+    return const_cast<byte*>(log_body_start_ptr);
   }
 
   // 读出value
-  val = mach_parse_compressed(&ptr, end_ptr);
+  val = mach_parse_compressed(&log_body_start_ptr, log_body_end_ptr);
 
-  if (ptr == nullptr) {
+  if (log_body_start_ptr == nullptr) {
     return nullptr;
   }
 
@@ -129,7 +131,7 @@ static byte* ParseOrApplyNBytes(LOG_TYPE type, const byte* ptr, const byte*	end_
     case MLOG_1BYTE:
       // 日志损坏
       if (val > 0xFFUL) {
-        ptr = nullptr;
+        log_body_start_ptr = nullptr;
       }
       // 对MLOG_1BYTES类型的日志进行Apply
       if (page) {
@@ -139,7 +141,7 @@ static byte* ParseOrApplyNBytes(LOG_TYPE type, const byte* ptr, const byte*	end_
     case MLOG_2BYTES:
       // 日志损坏
       if (val > 0xFFFFUL) {
-        ptr = nullptr;
+        log_body_start_ptr = nullptr;
       }
       // 对MLOG_2BYTES类型的日志进行Apply
       if (page) {
@@ -155,7 +157,7 @@ static byte* ParseOrApplyNBytes(LOG_TYPE type, const byte* ptr, const byte*	end_
       break;
   }
 
-  return const_cast<byte*>(ptr);
+  return const_cast<byte*>(log_body_start_ptr);
 }
 
 /********************************************************//**
@@ -882,8 +884,7 @@ static byte* ParseOrApplyIbufBitmapInit(byte* ptr, const byte* end_ptr,byte*	pag
 /**
  * Apply MLOG_COMP_PAGE_CREATE
  */
-static void
-ApplyCompPageCreate(byte* ptr, const byte* end_ptr, byte* page) {
+void ApplyCompPageCreate(byte* page) {
   if (page == nullptr) {
     return;
   }
@@ -912,61 +913,268 @@ ApplyCompPageCreate(byte* ptr, const byte* end_ptr, byte* page) {
 /**
  * Apply MLOG_INIT_FILE_PAGE2
  */
-static void
-ApplyInitFilePage2(byte* ptr, const byte* end_ptr, byte* page) {
+void ApplyInitFilePage2(const LogEntry &log, Page *page) {
   if (page == nullptr) {
     return;
   }
-
-  // 设置page的种类
-  fil_page_set_type(page, FIL_PAGE_INDEX);
-
-  std::memset(page + PAGE_HEADER, 0, PAGE_HEADER_PRIV_END);
-  page[PAGE_HEADER + PAGE_N_DIR_SLOTS + 1] = 2; // 初始化PAGE_N_DIR_SLOTS属性
-  page[PAGE_HEADER + PAGE_DIRECTION + 1] = PAGE_NO_DIRECTION; // // 初始化PAGE_DIRECTION属性
-
-  page[PAGE_HEADER + PAGE_N_HEAP] = 0x80;/*page_is_comp()*/
-  page[PAGE_HEADER + PAGE_N_HEAP + 1] = PAGE_HEAP_NO_USER_LOW;
-  page[PAGE_HEADER + PAGE_HEAP_TOP + 1] = PAGE_NEW_SUPREMUM_END;
-  std::memcpy(page + PAGE_DATA, infimum_supremum_compact,
-              sizeof infimum_supremum_compact);
-  std::memset(page
-              + PAGE_NEW_SUPREMUM_END, 0,
-              DATA_PAGE_SIZE - PAGE_DIR - PAGE_NEW_SUPREMUM_END);
-  page[DATA_PAGE_SIZE - PAGE_DIR - PAGE_DIR_SLOT_SIZE * 2 + 1]
-      = PAGE_NEW_SUPREMUM;
-  page[DATA_PAGE_SIZE - PAGE_DIR - PAGE_DIR_SLOT_SIZE + 1]
-      = PAGE_NEW_INFIMUM;
+  byte *page_data = page->GetData();
+  std::memset(page_data, 0, DATA_PAGE_SIZE);
+  // 写入page id
+  mach_write_to_4(page_data + FIL_PAGE_OFFSET, log.page_id_);
+  page->SetPageId(log.page_id_);
+  // 写入space id
+  mach_write_to_4(page_data + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID, log.space_id_);
+  page->SetSpaceId(log.space_id_);
 }
-static byte*
-ParseOrApplyString(byte* ptr, const byte* end_ptr, byte* page) {
+
+/**
+ * 从Redo Log中解析出索引信息
+ * @param ptr log body start pointer
+ * @param end_ptr log body end pointer
+ * @param index 索引信息，传出参数
+ * @return 该返回值之前的log已经被解析，后续应该从该返回值之后继续解析，如果返回值为nullptr，说明这是一个错误的log格式
+ */
+static byte* ParseIndexFromLog(const byte *ptr, const byte *end_ptr, IndexInfo &index) {
+
+  if (end_ptr < ptr + 4) {
+    return nullptr;
+  }
+  // 解析出要插入的这一个index有多少field
+  uint32_t n = mach_read_from_2(ptr);
+
+  ptr += 2;
+
+
+  // 解析出要插入的这一个index有多少个unique field
+  uint32_t n_uniq = mach_read_from_2(ptr);
+
+  ptr += 2;
+
+
+  assert(n_uniq <= n);
+  if (end_ptr < ptr + n * 2) {
+    return nullptr;
+  }
+
+  // 初始化index的信息
+  index.n_fields_ = n;
+  index.n_unique_ = n_uniq;
+  index.table_.n_total_cols_ = n;
+
+  if (n_uniq != n) {
+    assert(n_uniq + DATA_ROLL_PTR <= n);
+    index.type_ = DICT_CLUSTERED;
+  }
+
+  for (int i = 0; i < n; i++) {
+    uint32_t len = mach_read_from_2(ptr);
+    ptr += 2;
+    /* The high-order bit of len is the NOT NULL flag;
+    the rest is 0 or 0x7fff for variable-length fields,
+    and 1..0x7ffe for fixed-length fields. */
+    dict_mem_table_add_col(
+        table, NULL, NULL,
+        ((len + 1) & 0x7fff) <= 1
+        ? DATA_BINARY : DATA_FIXBINARY,
+        len & 0x8000 ? DATA_NOT_NULL : 0,
+        len & 0x7fff);
+
+    dict_index_add_col(ind, table,
+                       dict_table_get_nth_col(table, i),
+                       0);
+  }
+  dict_table_add_system_columns(table, table->heap);
+  if (n_uniq != n) {
+    /* Identify DB_TRX_ID and DB_ROLL_PTR in the index. */
+    ut_a(DATA_TRX_ID_LEN
+         == dict_index_get_nth_col(ind, DATA_TRX_ID - 1
+                                        + n_uniq)->len);
+    ut_a(DATA_ROLL_PTR_LEN
+         == dict_index_get_nth_col(ind, DATA_ROLL_PTR - 1
+                                        + n_uniq)->len);
+    ind->fields[DATA_TRX_ID - 1 + n_uniq].col
+        = &table->cols[n + DATA_TRX_ID];
+    ind->fields[DATA_ROLL_PTR - 1 + n_uniq].col
+        = &table->cols[n + DATA_ROLL_PTR];
+  }
+
+  /* avoid ut_ad(index->cached) in dict_index_get_n_unique_in_tree */
+  ind->cached = TRUE;
+  *index = ind;
+  return(ptr);
+}
+
+void ApplyCompRecInsert(const LogEntry &log, Page *page) {
+  IndexInfo index;
+  // TODO 解析log index信息，移动ptr指针
+
+
+  const byte *ptr = log.log_body_start_ptr_;
+  const byte *end_ptr = log.log_body_end_ptr_;
+  uint32_t origin_offset = 0;
+  uint32_t mismatch_index = 0;
+  byte*	cursor_rec;
+  byte	buf1[1024];
+  byte*	buf;
+  const byte*	ptr2		= ptr;
+  uint32_t info_and_status_bits = 0;
+  page_cur_t	cursor;
+  mem_heap_t*	heap		= NULL;
+  uint32_t offsets_[REC_OFFS_NORMAL_SIZE];
+  uint32_t* offsets = offsets_;
+  rec_offs_init(offsets_);
+
+  /* Read the cursor rec offset as a 2-byte ulint */
+
+  assert(end_ptr >= ptr + 2);
+
+  // 解析出上一条记录的页内偏移量
+  uint32_t offset = mach_read_from_2(ptr);
+  ptr += 2;
+
+  assert(offset < DATA_PAGE_SIZE);
+  cursor_rec = page->GetData() + offset; // 上一条记录的位置
+
+  // 解析出end_seg_len属性
+  uint32_t end_seg_len = mach_parse_compressed(&ptr, end_ptr);
+  assert(ptr != nullptr);
+
+  if (end_seg_len >= DATA_PAGE_SIZE << 1) {
+    // 到这说明这条log损坏了
+    return;
+  }
+
+  if (end_seg_len & 0x1UL) {
+    /* Read the info bits */
+
+    if (end_ptr < ptr + 1) {
+      return;
+    }
+
+    // 解析出info_and_status_bits
+    info_and_status_bits = mach_read_from_1(ptr);
+    ptr++;
+
+    // 解析出origin_offset
+    origin_offset = mach_parse_compressed(&ptr, end_ptr);
+
+    if (ptr == nullptr) {
+      return;
+    }
+
+    assert(origin_offset < DATA_PAGE_SIZE);
+
+    // 解析出mismatch_index
+    mismatch_index = mach_parse_compressed(&ptr, end_ptr);
+
+    if (ptr == nullptr) {
+      return;
+    }
+
+    assert(mismatch_index < DATA_PAGE_SIZE);
+  }
+
+  if (end_ptr < ptr + (end_seg_len >> 1)) {
+    return;
+  }
+
+  /* Read from the log the inserted index record end segment which
+  differs from the cursor record */
+
+  offsets = rec_get_offsets(cursor_rec, index, offsets,
+                            ULINT_UNDEFINED, &heap);
+
+  if (!(end_seg_len & 0x1UL)) {
+    info_and_status_bits = rec_get_info_and_status_bits(
+        cursor_rec, page_is_comp(page));
+    origin_offset = rec_offs_extra_size(offsets);
+    mismatch_index = rec_offs_size(offsets) - (end_seg_len >> 1);
+  }
+
+  end_seg_len >>= 1;
+
+  if (mismatch_index + end_seg_len < sizeof buf1) {
+    buf = buf1;
+  } else {
+    buf = static_cast<byte*>(
+        ut_malloc_nokey(mismatch_index + end_seg_len));
+  }
+
+  /* Build the inserted record to buf */
+
+  if (UNIV_UNLIKELY(mismatch_index >= UNIV_PAGE_SIZE)) {
+
+    ib::fatal() << "is_short " << is_short << ", "
+                << "info_and_status_bits " << info_and_status_bits
+                << ", offset " << page_offset(cursor_rec) << ","
+                                                             " o_offset " << origin_offset << ", mismatch index "
+                << mismatch_index << ", end_seg_len " << end_seg_len
+                << " parsed len " << (ptr - ptr2);
+  }
+
+  ut_memcpy(buf, rec_get_start(cursor_rec, offsets), mismatch_index);
+  ut_memcpy(buf + mismatch_index, ptr, end_seg_len);
+
+  if (page_is_comp(page)) {
+    rec_set_info_and_status_bits(buf + origin_offset,
+                                 info_and_status_bits);
+  } else {
+    rec_set_info_bits_old(buf + origin_offset,
+                          info_and_status_bits);
+  }
+
+  page_cur_position(cursor_rec, block, &cursor);
+
+  offsets = rec_get_offsets(buf + origin_offset, index, offsets,
+                            ULINT_UNDEFINED, &heap);
+  if (UNIV_UNLIKELY(!page_cur_rec_insert(&cursor,
+                                         buf + origin_offset,
+                                         index, offsets, mtr))) {
+    /* The redo log record should only have been written
+    after the write was successful. */
+    ut_error;
+  }
+
+  if (buf != buf1) {
+
+    ut_free(buf);
+  }
+
+  if (UNIV_LIKELY_NULL(heap)) {
+    mem_heap_free(heap);
+  }
+}
+
+
+byte* ParseOrApplyString(byte* log_body_start_ptr, const byte* log_body_end_ptr, byte* page) {
   uint32_t offset;
   uint32_t len;
 
-  if (end_ptr < ptr + 4) {
+  if (log_body_end_ptr < log_body_start_ptr + 4) {
 
     return nullptr;
   }
 
-  offset = mach_read_from_2(ptr);
-  ptr += 2;
-  len = mach_read_from_2(ptr);
-  ptr += 2;
+  offset = mach_read_from_2(log_body_start_ptr);
+  log_body_start_ptr += 2;
+  len = mach_read_from_2(log_body_start_ptr);
+  log_body_start_ptr += 2;
 
   assert(offset < DATA_PAGE_SIZE);
   assert(len + offset <= DATA_PAGE_SIZE);
 
-  if (end_ptr < ptr + len) {
+  if (log_body_end_ptr < log_body_start_ptr + len) {
     return nullptr;
   }
 
   // Apply
   if (page) {
-    memcpy(page + offset, ptr, len);
+    std::memcpy(page + offset, log_body_start_ptr, len);
   }
 
-  return(ptr + len);
+  return(log_body_start_ptr + len);
 }
+
 /** Try to parse a single log record body and also applies it if
 specified.
 @param[in]	type		redo log entry type

@@ -149,7 +149,7 @@ bool ApplySystem::ApplyHashLogs() {
       lsn_t page_lsn = page->GetLSN();
 
       for (const auto &log: pages_logs.second) {
-        lsn_t log_lsn = log.lsn_;
+        lsn_t log_lsn = log.log_start_lsn_;
 
         // skip!
         if (page_lsn >= log_lsn) {
@@ -158,11 +158,12 @@ bool ApplySystem::ApplyHashLogs() {
           break;
         }
         ApplyOneLog(page, log);
+        page->WritePageLSN(log_lsn + log.log_len_);
         std::cout << "Applied log(type = " << GetLogString(log.type_) << ", space_id = "
                   << log.space_id_ << "page_id = " << log.page_id_ <<") to page." << std::endl;
 //        ofs << "type = " << GetLogString(log.type_)
 //            << ", space_id = " << log.space_id_ << ", page_id = "
-//            << log.page_id_ << ", data_len = " << log.log_body_len_ << ", lsn = " << log.lsn_ << std::endl;
+//            << log.page_id_ << ", data_len = " << log.log_body_len_ << ", lsn = " << log.log_start_lsn_ << std::endl;
       }
 //      buf_block_t buf_block;
     }
@@ -170,6 +171,36 @@ bool ApplySystem::ApplyHashLogs() {
 }
 
 bool ApplySystem::ApplyOneLog(Page *page, const LogEntry &log) {
+  switch (log.type_) {
+    case MLOG_1BYTE:
+    case MLOG_2BYTES:
+    case MLOG_4BYTES:
+    case MLOG_8BYTES:
+      ParseOrApplyNBytes(log.type_, log.log_body_start_ptr_, log.log_body_end_ptr_, page->GetData());
+      break;
+    case MLOG_WRITE_STRING:
+      ParseOrApplyString(log.log_body_start_ptr_, log.log_body_end_ptr_, page->GetData());
+      break;
+    case MLOG_COMP_PAGE_CREATE:
+      ApplyCompPageCreate(page->GetData());
+      break;
+    case MLOG_INIT_FILE_PAGE2:
+      ApplyInitFilePage2(log, page);
+      break;
+    default:
+    case MLOG_COMP_REC_INSERT:
+      if (NULL != (ptr = mlog_parse_index(
+          ptr, end_ptr,
+          type == MLOG_COMP_REC_INSERT,
+          &index))) {
+        ut_a(!page
+             || (ibool)!!page_is_comp(page)
+                       == dict_table_is_comp(index->table));
+        ptr = page_cur_parse_insert_rec(FALSE, ptr, end_ptr,
+                                        block, index, mtr);
+      }
+      break;
+  }
   return false;
 }
 //

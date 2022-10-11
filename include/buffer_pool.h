@@ -70,9 +70,21 @@ public:
     state_ = state;
   }
 
-  // TODO 写page 的lsn时，有两处地方需要写，
-  void WriteLSN(lsn_t lsn) {
-
+  void WritePageLSN(lsn_t lsn) {
+    // 写page的lsn时，有两处地方需要写
+    // 1. 头部的FIL_PAGE_LSN属性
+    mach_write_to_8(FIL_PAGE_LSN + data_, lsn);
+    // 2. 尾部的FIL_PAGE_END_LSN_OLD_CHKSUM属性的后4位
+    mach_write_to_8(DATA_PAGE_SIZE
+                    - FIL_PAGE_END_LSN_OLD_CHKSUM
+                    + data_, lsn);
+    lsn_ = lsn;
+  }
+  void SetSpaceId(space_id_t space_id) {
+    space_id_ = space_id;
+  }
+  void SetPageId(page_id_t page_id) {
+    page_id_ = page_id;
   }
 private:
   void SetLSN() {
@@ -83,12 +95,6 @@ private:
   }
   void SetSpaceId() {
     space_id_ = mach_read_from_4(data_ + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID);
-  }
-  void SetSpaceId(space_id_t space_id) {
-    space_id_ = space_id;
-  }
-  void SetPageId(page_id_t page_id) {
-    page_id_ = page_id;
   }
   void SetPageId() {
     page_id_ = mach_read_from_4(data_ + FIL_PAGE_OFFSET);

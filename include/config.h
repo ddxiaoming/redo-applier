@@ -257,7 +257,7 @@ static constexpr unsigned char infimum_supremum_compact[] = {
 
 static constexpr uint32_t SIZE_OF_MLOG_CHECKPOINT = 9;
 
-static constexpr uint32_t DATA_ROLL_PTR_LEN = 7;
+
 
 // undo log相关的常量
 static constexpr uint32_t TRX_UNDO_PAGE_HDR = 38U;
@@ -319,6 +319,7 @@ static constexpr uint32_t PAGE_NEW_SUPREMUM_END = (PAGE_NEW_SUPREMUM + 8);
 static constexpr uint32_t FIL_PAGE_LSN = 16;
 static constexpr uint32_t FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID = 34;
 static constexpr uint32_t FIL_PAGE_OFFSET = 4;
+static constexpr uint32_t FIL_PAGE_END_LSN_OLD_CHKSUM = 8;
 // trx相关的常量
 static constexpr uint32_t XIDDATASIZE = 128;
 static constexpr uint32_t	TRX_UNDO_XA_FORMAT = (TRX_UNDO_LOG_OLD_HDR_SIZE);
@@ -368,4 +369,33 @@ static constexpr uint32_t FIL_PAGE_TYPE_LAST = FIL_PAGE_TYPE_UNKNOWN;
 static constexpr uint32_t FIL_PAGE_TYPE = 24;
 
 
+// index type
+static constexpr uint32_t DICT_CLUSTERED = 1;	/*!< clustered index; for other than auto-generated clustered indexes,
+				                                        also DICT_UNIQUE will be set */
+static constexpr uint32_t DICT_UNIQUE = 2;	/*!< unique index */
+static constexpr uint32_t	DICT_IBUF = 8;	/*!< insert buffer tree */
+static constexpr uint32_t DICT_CORRUPT = 16;	/*!< bit to store the corrupted flag in SYS_INDEXES.TYPE */
+static constexpr uint32_t DICT_FTS = 32;	/* FTS index; can't be combined with the other flags */
+static constexpr uint32_t DICT_SPATIAL = 64;	/* SPATIAL index; can't be combined with the other flags */
+static constexpr uint32_t DICT_VIRTUAL = 128;	/* Index on Virtual column */
+
+
+// data type
+/* Precise data types for system columns and the length of those columns;
+NOTE: the values must run from 0 up in the order given! All codes must
+be less than 256 */
+static constexpr uint32_t DATA_ROW_ID = 0;	/* row id: a 48-bit integer */
+static constexpr uint32_t DATA_ROW_ID_LEN = 6;	/* stored length for row id */
+
+static constexpr uint32_t DATA_TRX_ID = 1;	/* transaction id: 6 bytes */
+static constexpr uint32_t DATA_TRX_ID_LEN = 6;
+
+static constexpr uint32_t DATA_ROLL_PTR = 2;	/* rollback data pointer: 7 bytes */
+static constexpr uint32_t DATA_ROLL_PTR_LEN = 7;
+
+static constexpr uint32_t DATA_N_SYS_COLS = 3;	/* number of system columns defined above */
+
+static constexpr uint32_t DATA_ITT_N_SYS_COLS = 2;
+/* number of system columns for intrinsic
+temporary table */
 }
