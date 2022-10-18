@@ -2,6 +2,7 @@
 #include <vector>
 #include <string>
 #include "config.h"
+#include <cassert>
 namespace Lemon {
 
 bool TravelDirectory(const std::string &dir_path, const std::string &suffix, std::vector<std::string> &files);
@@ -74,6 +75,23 @@ inline void mach_write_to_2(byte*	b, uint16_t n) {
   b[0] = static_cast<byte>(n >> 8);
   b[1] = static_cast<byte>(n);
 }
+
+/*******************************************************//**
+The following function is used to store data in 3 consecutive
+bytes. We store the most significant byte to the lowest address. */
+inline void mach_write_to_3(
+/*============*/
+    byte*	b,	/*!< in: pointer to 3 bytes where to store */
+    uint32_t n)	/*!< in: ulint integer to be stored */
+{
+  assert(b);
+  assert((n | 0xFFFFFFUL) <= 0xFFFFFFUL);
+
+  b[0] = (byte)(n >> 16);
+  b[1] = (byte)(n >> 8);
+  b[2] = (byte)(n);
+}
+
 /*******************************************************//**
 The following function is used to store data in four consecutive
 bytes. We store the most significant byte to the lowest address. */
@@ -83,6 +101,29 @@ inline void mach_write_to_4(byte*	b, uint32_t n) {
   b[2] = (byte)(n >> 8);
   b[3] = (byte) n;
 }
+/*******************************************************//**
+The following function is used to store data in 6 consecutive
+bytes. We store the most significant byte to the lowest address. */
+inline void mach_write_to_6(byte* b, uint64_t n) {
+  assert(b);
+  mach_write_to_2(b, (n >> 32));
+  mach_write_to_4(b + 2, n);
+}
+
+/*******************************************************//**
+The following function is used to store data in 7 consecutive
+bytes. We store the most significant byte to the lowest address. */
+inline void mach_write_to_7(
+/*============*/
+    byte*		b,	/*!< in: pointer to 7 bytes where to store */
+    uint64_t 	n)	/*!< in: 56-bit integer */
+{
+  assert(b);
+
+  mach_write_to_3(b, (n >> 32));
+  mach_write_to_4(b + 3, n);
+}
+
 
 inline void mach_write_to_8(void* b, uint64_t n) {
   mach_write_to_4(static_cast<byte*>(b), static_cast<uint32_t>(n >> 32));
@@ -94,4 +135,30 @@ inline uint16_t mach_encode_2(uint16_t n) {
   mach_write_to_2((byte*) &ret, n);
   return ret;
 }
+/*******************************************************//**
+Creates a 64-bit integer out of two 32-bit integers.
+@return created integer */
+inline
+uint64_t
+ut_ull_create(
+    uint32_t 	high,	/*!< in: high-order 32 bits */
+    uint32_t 	low)	/*!< in: low-order 32 bits */
+{
+  return(((uint64_t) high) << 32 | low);
+}
+
+
+/********************************************************//**
+The following function is used to fetch data from 7 consecutive
+bytes. The most significant byte is at the lowest address.
+@return 56-bit integer */
+inline
+uint64_t
+mach_read_from_7(
+/*=============*/
+    const byte*	b)	/*!< in: pointer to 7 bytes */
+{
+  return(ut_ull_create(mach_read_from_3(b), mach_read_from_4(b + 3)));
+}
+
 }

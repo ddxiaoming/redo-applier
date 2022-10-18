@@ -19,6 +19,10 @@ void CompareLog() {
       line_number++;
       continue;
     }
+    if (my_type == "type == MLOG_COMP_REC_INSERT") {
+//      fmt::print("line:{}, log:{}\n", line_number, my_line);
+      break;
+    }
     if (standard_line != my_line) {
       break;
     }

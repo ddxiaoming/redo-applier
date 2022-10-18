@@ -27,6 +27,7 @@ BufferPool::BufferPool() :
     data_path_("/home/lemon/mysql/data/"),
     space_id_2_file_name_(),
     free_list_(), frame_id_2_page_address_(BUFFER_POOL_SIZE) {
+
   // 1. 构建映射表
   std::vector<std::string> filenames;
   TravelDirectory(data_path_, ".ibd", filenames);

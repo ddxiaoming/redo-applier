@@ -49,7 +49,7 @@ private:
 
   uint32_t checkpoint_offset_;
 
-  uint32_t log_file_size_;
+  uint64_t log_file_size_;
 
   // 下次取出log file中这个log block no代表的block到log_buf_中
   uint32_t next_fetch_page_id_;
@@ -69,7 +69,7 @@ private:
   // 用来读取log文件的流
   std::ifstream log_stream_;
 
-//  std::ofstream ofs{"/home/lemon/redolog2.txt"};
+  std::ofstream ofs{"/home/lemon/redolog2.txt"};
 };
 
 }

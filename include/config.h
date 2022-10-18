@@ -30,7 +30,7 @@ static constexpr uint32_t PER_LOG_FILE_SIZE = 48 * 1024 * 1204; // 48M
 
 static constexpr uint32_t N_BLOCKS_IN_A_PAGE = DATA_PAGE_SIZE / LOG_BLOCK_SIZE; // 48M
 
-static constexpr uint32_t BUFFER_POOL_SIZE = 8 * 1024 * 1024; // buffer pool size in data_page_size
+static constexpr uint32_t BUFFER_POOL_SIZE = 8 * 1024; // buffer pool size in data_page_size
 
 enum LOG_TYPE : uint8_t {
   /** if the mtr contains only one log record for one page,
@@ -293,9 +293,6 @@ static constexpr uint32_t REC_INFO_DELETED_FLAG = 0x20UL;
 // page相关的常量
 static constexpr uint32_t PAGE_DIR = FIL_PAGE_DATA_END;
 static constexpr uint32_t	PAGE_DIR_SLOT_SIZE = 2;
-static constexpr uint32_t PAGE_N_DIR_SLOTS = 0;
-static constexpr uint32_t	PAGE_LAST_INSERT = 10;
-static constexpr uint32_t	PAGE_INDEX_ID = 28;
 static constexpr uint32_t FIL_PAGE_DATA = 38U;
 static constexpr uint32_t FSEG_PAGE_DATA = FIL_PAGE_DATA;
 static constexpr uint32_t	PAGE_HEADER = FSEG_PAGE_DATA;
@@ -303,12 +300,6 @@ static constexpr uint32_t REC_OLD_N_OWNED	= 6;	/* This is single byte bit-field 
 static constexpr uint32_t REC_NEW_N_OWNED = 5;	/* This is single byte bit-field */
 static constexpr uint32_t REC_N_OWNED_MASK = 0xFUL;
 static constexpr uint32_t REC_N_OWNED_SHIFT = 0;
-static constexpr uint32_t REC_NEXT = 2;
-static constexpr uint32_t PAGE_HEADER_PRIV_END = 26;
-static constexpr uint32_t PAGE_DIRECTION = 12;
-static constexpr uint32_t PAGE_NO_DIRECTION = 5;
-static constexpr uint32_t PAGE_N_HEAP = 4;
-static constexpr uint32_t PAGE_HEAP_TOP = 2;
 static constexpr uint32_t PAGE_HEAP_NO_USER_LOW = 2;
 static constexpr uint32_t FSEG_HEADER_SIZE = 10;
 static constexpr uint32_t REC_N_NEW_EXTRA_BYTES = 5;
@@ -381,6 +372,7 @@ static constexpr uint32_t DICT_VIRTUAL = 128;	/* Index on Virtual column */
 
 
 // data type
+
 /* Precise data types for system columns and the length of those columns;
 NOTE: the values must run from 0 up in the order given! All codes must
 be less than 256 */
@@ -395,7 +387,191 @@ static constexpr uint32_t DATA_ROLL_PTR_LEN = 7;
 
 static constexpr uint32_t DATA_N_SYS_COLS = 3;	/* number of system columns defined above */
 
-static constexpr uint32_t DATA_ITT_N_SYS_COLS = 2;
-/* number of system columns for intrinsic
-temporary table */
+static constexpr uint32_t DATA_ITT_N_SYS_COLS = 2; /* number of system columns for intrinsic temporary table */
+static constexpr uint32_t DATA_FTS_DOC_ID = 3;	/* Used as FTS DOC ID column */
+
+static constexpr uint32_t DATA_SYS_PRTYPE_MASK = 0xF; /* mask to extract the above from prtype */
+
+/* Flags ORed to the precise data type */
+static constexpr uint32_t DATA_NOT_NULL = 256;	/* this is ORed to the precise type when
+				the column is declared as NOT NULL */
+static constexpr uint32_t DATA_UNSIGNED = 512;	/* this id ORed to the precise type when
+				we have an unsigned integer type */
+static constexpr uint32_t DATA_BINARY_TYPE = 1024;	/* if the data type is a binary character
+				string, this is ORed to the precise type:
+				this only holds for tables created with
+				>= MySQL-4.0.14 */
+/* #define	DATA_NONLATIN1	2048 This is a relic from < 4.1.2 and < 5.0.1.
+				In earlier versions this was set for some
+				BLOB columns.
+*/
+static constexpr uint32_t DATA_GIS_MBR = 2048;	/* Used as GIS MBR column */
+static constexpr uint32_t DATA_MBR_LEN = 2 * 2 * sizeof(double); /* GIS MBR length*/
+
+static constexpr uint32_t DATA_LONG_TRUE_VARCHAR = 4096;	/* this is ORed to the precise data
+				type when the column is true VARCHAR where
+				MySQL uses 2 bytes to store the data len;
+				for shorter VARCHARs MySQL uses only 1 byte */
+static constexpr uint32_t DATA_VIRTUAL = 8192;	/* Virtual column */
+
+
+/*-------------------------------------------*/
+/* The 'MAIN TYPE' of a column */
+static constexpr uint32_t DATA_MISSING = 0;	/* missing column */
+static constexpr uint32_t DATA_VARCHAR = 1;	/* character varying of the
+				latin1_swedish_ci charset-collation; note
+				that the MySQL format for this, DATA_BINARY,
+				DATA_VARMYSQL, is also affected by whether the
+				'precise type' contains
+				DATA_MYSQL_TRUE_VARCHAR */
+static constexpr uint32_t DATA_CHAR	= 2;	/* fixed length character of the
+				latin1_swedish_ci charset-collation */
+static constexpr uint32_t DATA_FIXBINARY = 3;	/* binary string of fixed length */
+static constexpr uint32_t DATA_BINARY = 4;	/* binary string */
+static constexpr uint32_t DATA_BLOB = 5;	/* binary large object, or a TEXT type;
+				if prtype & DATA_BINARY_TYPE == 0, then this is
+				actually a TEXT column (or a BLOB created
+				with < 4.0.14; since column prefix indexes
+				came only in 4.0.14, the missing flag in BLOBs
+				created before that does not cause any harm) */
+static constexpr uint32_t DATA_INT = 6;	/* integer: can be any size 1 - 8 bytes */
+static constexpr uint32_t DATA_SYS_CHILD = 7;	/* address of the child page in node pointer */
+static constexpr uint32_t DATA_SYS = 8;	/* system column */
+/* Data types >= DATA_FLOAT must be compared using the whole field, not as
+binary strings */
+
+static constexpr uint32_t DATA_FLOAT = 9;
+static constexpr uint32_t DATA_DOUBLE = 10;
+static constexpr uint32_t DATA_DECIMAL = 11;	/* decimal number stored as an ASCII string */
+static constexpr uint32_t	DATA_VARMYSQL	= 12;	/* any charset varying length char */
+static constexpr uint32_t	DATA_MYSQL = 13;	/* any charset fixed length char */
+/* NOTE that 4.1.1 used DATA_MYSQL and
+DATA_VARMYSQL for all character sets, and the
+charset-collation for tables created with it
+can also be latin1_swedish_ci */
+
+/* DATA_POINT&DATA_VAR_POINT are for standard geometry datatype 'point' and
+DATA_GEOMETRY include all other standard geometry datatypes as described in
+OGC standard(line_string, polygon, multi_point, multi_polygon,
+multi_line_string, geometry_collection, geometry).
+Currently, geometry data is stored in the standard Well-Known Binary(WKB)
+format (http://www.opengeospatial.org/standards/sfa).
+We use BLOB as underlying datatype for DATA_GEOMETRY and DATA_VAR_POINT
+while CHAR for DATA_POINT */
+static constexpr uint32_t DATA_GEOMETRY	= 14;	/* geometry datatype of variable length */
+/* The following two are disabled temporarily, we won't create them in
+get_innobase_type_from_mysql_type().
+TODO: We will enable DATA_POINT/them when we come to the fixed-length POINT
+again. */
+static constexpr uint32_t DATA_POINT = 15;	/* geometry datatype of fixed length POINT */
+static constexpr uint32_t DATA_VAR_POINT = 16;	/* geometry datatype of variable length
+				POINT, used when we want to store POINT
+				as BLOB internally */
+static constexpr uint32_t DATA_MTYPE_MAX = 63;	/* dtype_store_for_order_and_null_size()
+				requires the values are <= 63 */
+
+static constexpr uint32_t DATA_MTYPE_CURRENT_MIN = DATA_VARCHAR;	/* minimum value of mtype */
+static constexpr uint32_t DATA_MTYPE_CURRENT_MAX = DATA_VAR_POINT;	/* maximum value of mtype */
+
+static constexpr uint32_t DATA_MBMAX = 5;
+
+static constexpr uint32_t REC_NEW_STATUS = 3;	/* This is single byte bit-field */
+static constexpr uint32_t REC_NEW_STATUS_MASK = 0x7UL;
+static constexpr uint32_t REC_NEW_STATUS_SHIFT = 0;
+
+/*-----------------------------*/
+static constexpr uint32_t PAGE_N_DIR_SLOTS = 0;	/* number of slots in page directory */
+static constexpr uint32_t PAGE_HEAP_TOP	= 2;	/* pointer to record heap top */
+static constexpr uint32_t PAGE_N_HEAP = 4;	/* number of records in the heap,
+				bit 15=flag: new-style compact page format */
+static constexpr uint32_t PAGE_FREE = 6;	/* pointer to start of page free record list */
+static constexpr uint32_t PAGE_GARBAGE = 8;	/* number of bytes in deleted records */
+static constexpr uint32_t PAGE_LAST_INSERT = 10;	/* pointer to the last inserted record, or
+				NULL if this info has been reset by a delete,
+				for example */
+static constexpr uint32_t PAGE_DIRECTION = 12;	/* last insert direction: PAGE_LEFT, ... */
+static constexpr uint32_t PAGE_N_DIRECTION = 14;	/* number of consecutive inserts to the same
+				direction */
+static constexpr uint32_t PAGE_N_RECS = 16;	/* number of user records on the page */
+static constexpr uint32_t PAGE_MAX_TRX_ID = 18;	/* highest id of a trx which may have modified
+				a record on the page; trx_id_t; defined only
+				in secondary indexes and in the insert buffer
+				tree */
+static constexpr uint32_t PAGE_HEADER_PRIV_END = 26;	/* end of private data structure of the page
+				header which are set in a page create */
+/*----*/
+static constexpr uint32_t PAGE_LEVEL = 26;	/* level of the node in an index tree; the
+				leaf level is the level 0.  This field should
+				not be written to after page creation. */
+static constexpr uint32_t PAGE_INDEX_ID = 28;	/* index id where the page belongs.
+				This field should not be written to after
+				page creation. */
+
+
+static constexpr uint32_t DICT_MAX_FIXED_COL_LEN = 768;
+
+static constexpr uint32_t REC_STATUS_ORDINARY = 0;
+static constexpr uint32_t REC_STATUS_NODE_PTR = 1;
+static constexpr uint32_t REC_STATUS_INFIMUM = 2;
+static constexpr uint32_t REC_STATUS_SUPREMUM = 3;
+
+static constexpr uint32_t REC_OFFS_HEADER_SIZE = 4;
+
+static constexpr uint32_t ULINT_UNDEFINED = UINT32_MAX;
+
+/* Compact flag ORed to the extra size returned by rec_get_offsets() */
+static constexpr uint32_t REC_OFFS_COMPACT = ((uint32_t) 1 << 31);
+/* SQL NULL flag in offsets returned by rec_get_offsets() */
+static constexpr uint32_t REC_OFFS_SQL_NULL = ((uint32_t) 1 << 31);
+/* External flag in offsets returned by rec_get_offsets() */
+static constexpr uint32_t REC_OFFS_EXTERNAL = ((uint32_t) 1 << 30);
+/* Mask for offsets returned by rec_get_offsets() */
+static constexpr uint32_t REC_OFFS_MASK = (REC_OFFS_EXTERNAL - 1);
+
+static constexpr uint32_t REC_NEXT = 2;
+static constexpr uint32_t REC_NEXT_MASK = 0xFFFFUL;
+static constexpr uint32_t REC_NEXT_SHIFT = 0;
+
+
+/* The offset of heap_no in a compact record */
+static constexpr uint32_t  REC_NEW_HEAP_NO = 4;
+/* The shift of heap_no in a compact record.
+The status is stored in the low-order bits. */
+static constexpr uint32_t REC_HEAP_NO_SHIFT = 3;
+
+/* Length of a B-tree node pointer, in bytes */
+static constexpr uint32_t REC_NODE_PTR_SIZE = 4;
+
+static constexpr uint32_t REC_HEAP_NO_MASK = 0xFFF8UL;
+
+static constexpr uint32_t PAGE_DIR_SLOT_MAX_N_OWNED = 8;
+static constexpr uint32_t	PAGE_DIR_SLOT_MIN_N_OWNED = 4;
+
+static constexpr uint32_t	PAGE_LEFT = 1;
+static constexpr uint32_t	PAGE_RIGHT = 2;
+static constexpr uint32_t	PAGE_SAME_REC	= 3;
+static constexpr uint32_t	PAGE_SAME_PAGE = 4;
+static constexpr uint32_t	PAGE_NO_DIRECTION = 5;
+
+enum {
+  /** do no undo logging */
+  BTR_NO_UNDO_LOG_FLAG = 1,
+  /** do no record lock checking */
+  BTR_NO_LOCKING_FLAG = 2,
+  /** sys fields will be found in the update vector or inserted
+  entry */
+  BTR_KEEP_SYS_FLAG = 4,
+  /** btr_cur_pessimistic_update() must keep cursor position
+  when moving columns to big_rec */
+  BTR_KEEP_POS_FLAG = 8,
+  /** the caller is creating the index or wants to bypass the
+  index->info.online creation log */
+  BTR_CREATE_FLAG = 16,
+  /** the caller of btr_cur_optimistic_update() or
+  btr_cur_update_in_place() will take care of
+  updating IBUF_BITMAP_FREE */
+  BTR_KEEP_IBUF_BITMAP = 32
+};
+
+static constexpr uint32_t	UNIV_SQL_NULL = 0xFFFFFFFF;
 }

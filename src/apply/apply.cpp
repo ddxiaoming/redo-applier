@@ -17,7 +17,7 @@ ApplySystem::ApplySystem() :
     checkpoint_lsn_(0),
     checkpoint_no_(0),
     checkpoint_offset_(0),
-    log_file_size_(48 * 1024 * 1024), // 48MB
+    log_file_size_(static_cast<uint64_t>(10) * 1024 * 1024 * 1024), // 10GB
     next_fetch_page_id_(0),
     next_fetch_block_(-1),
     log_max_page_id_(log_file_size_ / DATA_PAGE_SIZE),
@@ -122,9 +122,9 @@ bool ApplySystem::PopulateHashMap() {
                                               next_lsn_, len, log_body_ptr,
                                               log_body_ptr + len);
     next_lsn_ += len;
-//    ofs << "type = " << GetLogString(type)
-//        << ", space_id = " << space_id << ", page_id = "
-//        << page_id << ", data_len = " << len << std::endl;
+    ofs << "type = " << GetLogString(type)
+        << ", space_id = " << space_id << ", page_id = "
+        << page_id << ", data_len = " << len << std::endl;
   }
 
 
@@ -161,13 +161,14 @@ bool ApplySystem::ApplyHashLogs() {
         page->WritePageLSN(log_lsn + log.log_len_);
         std::cout << "Applied log(type = " << GetLogString(log.type_) << ", space_id = "
                   << log.space_id_ << "page_id = " << log.page_id_ <<") to page." << std::endl;
-//        ofs << "type = " << GetLogString(log.type_)
+//        ofs << "type = " << GetLogString(log.index_type_)
 //            << ", space_id = " << log.space_id_ << ", page_id = "
 //            << log.page_id_ << ", data_len = " << log.log_body_len_ << ", lsn = " << log.log_start_lsn_ << std::endl;
       }
 //      buf_block_t buf_block;
     }
   }
+  return true;
 }
 
 bool ApplySystem::ApplyOneLog(Page *page, const LogEntry &log) {
@@ -189,16 +190,16 @@ bool ApplySystem::ApplyOneLog(Page *page, const LogEntry &log) {
       break;
     default:
     case MLOG_COMP_REC_INSERT:
-      if (NULL != (ptr = mlog_parse_index(
-          ptr, end_ptr,
-          type == MLOG_COMP_REC_INSERT,
-          &index))) {
-        ut_a(!page
-             || (ibool)!!page_is_comp(page)
-                       == dict_table_is_comp(index->table));
-        ptr = page_cur_parse_insert_rec(FALSE, ptr, end_ptr,
-                                        block, index, mtr);
-      }
+      ApplyCompRecInsert(log, page);
+      break;
+    case MLOG_COMP_REC_CLUST_DELETE_MARK:
+      ApplyCompRecClusterDeleteMark(log, page);
+      break;
+    case MLOG_COMP_REC_SEC_DELETE_MARK:
+      ApplyCompRecSecondDeleteMark(log, page);
+      break;
+    case MLOG_COMP_REC_UPDATE_IN_PLACE:
+      ApplyCompRecUpdateInPlace(log, page);
       break;
   }
   return false;
@@ -245,7 +246,7 @@ bool ApplySystem::ApplyOneLog(Page *page, const LogEntry &log) {
 //  offset = mach_read_from_2(log.log_body_start_ptr_);
 //  ptr += 2;
 //
-//  if (log.type_ == MLOG_8BYTES) {
+//  if (log.index_type_ == MLOG_8BYTES) {
 //    dval = mach_u64_parse_compressed(&ptr, end_ptr);
 //    if (ptr == nullptr) {
 //      return;
@@ -260,7 +261,7 @@ bool ApplySystem::ApplyOneLog(Page *page, const LogEntry &log) {
 //    return;
 //  }
 //
-//  switch (log.type_) {
+//  switch (log.index_type_) {
 //    case MLOG_1BYTE:
 //      if (val > 0xFFUL) {
 //        return;
@@ -305,7 +306,7 @@ bool ApplySystem::ApplyOneLog(Page *page, const LogEntry &log) {
 //  mtr_t mtr;
 //  mtr.set_log_mode(MTR_LOG_NONE);
 //  InitBufBlock(block, page);
-//  mlog_id_t type = log.type_;
+//  mlog_id_t type = log.index_type_;
 //  std::cout << "applying " << GetLogString(type);
 //  uint32_t space_id = log.space_no_;
 //  dict_index_t*	index	= nullptr;

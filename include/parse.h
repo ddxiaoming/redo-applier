@@ -62,4 +62,21 @@ void ApplyInitFilePage2(const LogEntry &log, Page *page);
  * @param page
  */
 void ApplyCompRecInsert(const LogEntry &log, Page *page);
+
+/**
+ * Apply MLOG_COMP_REC_CLUST_DELETE_MARK
+ * @param log
+ * @param page
+ */
+void ApplyCompRecClusterDeleteMark(const LogEntry &log, Page *page);
+
+/**
+ * Apply MLOG_COMP_REC_UPDATE_IN_PLACE
+ * @param log
+ * @param page
+ */
+void ApplyCompRecUpdateInPlace(const LogEntry &log, Page *page);
+
+
+void ApplyCompRecSecondDeleteMark(const LogEntry &log, Page *page);
 }

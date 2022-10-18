@@ -2,6 +2,7 @@
 #include "config.h"
 #include <vector>
 #include <memory>
+#include <cassert>
 namespace Lemon {
 
 // 一条redo log
@@ -22,85 +23,68 @@ public:
   byte *log_body_start_ptr_; // 闭区间 log body的起始地址
   byte *log_body_end_ptr_; // 开区间 log body的结束地址
 };
+class RecordInfo;
 
-/** Data structure for a column in a table */
-class ColumnInfo {
+
+class FieldInfo {
 public:
-  /*----------------------*/
-  /** The following are copied from dtype_t,
-  so that all bit-fields can be packed tightly. */
-  /* @{ */
-  unsigned	prtype:32;	/*!< precise type; MySQL data
-					type, charset code, flags to
-					indicate nullability,
-					signedness, whether this is a
-					binary string, whether this is
-					a true VARCHAR where MySQL
-					uses 2 bytes to store the length */
-  unsigned	mtype:8;	/*!< main data type */
+  friend class RecordInfo;
+  FieldInfo() = default;
+  FieldInfo(uint32_t main_type, uint32_t precise_type, uint32_t length, uint32_t fixed_length) :
+  main_type_(main_type), precise_type_(precise_type), length_(length), fixed_length_(fixed_length) {}
 
-  /* the remaining fields do not affect alphabetical ordering: */
+public:
+//  bool is_fixed_; // true if fixed-length, false if variable-length
 
-  unsigned	len:16;		/*!< length; for MySQL data this
-					is field->pack_length(),
-					except that for a >= 5.0.3
-					type true VARCHAR this is the
-					maximum byte length of the
-					string data (in addition to
-					the string, MySQL uses 1 or 2
-					bytes to store the string length) */
+//  bool is_not_null_; // 这一列是否定义为not null
 
-  unsigned	mbminmaxlen:5;	/*!< minimum and maximum length of a
-					character, in bytes;
-					DATA_MBMINMAXLEN(mbminlen,mbmaxlen);
-					mbminlen=DATA_MBMINLEN(mbminmaxlen);
-					mbmaxlen=DATA_MBMINLEN(mbminmaxlen) */
-  /*----------------------*/
-  /* End of definitions copied from dtype_t */
-  /* @} */
-
-  unsigned	ind:10;		/*!< table column position
-					(starting from 0) */
-  unsigned	ord_part:1;	/*!< nonzero if this column
-					appears in the ordering fields
-					of an index */
-  unsigned	max_prefix:12;	/*!< maximum index prefix length on
-					this column. Our current max limit is
-					3072 for Barracuda table */
+  uint32_t main_type_;
+  uint32_t precise_type_;
+  uint32_t length_;
+  uint32_t fixed_length_;
 };
 
-class TableInfo {
+class RecordInfo {
 public:
+  inline void SetNFields(uint32_t n_fields) {
+    n_fields_ = n_fields;
+  }
+  inline void SetRecPtr(byte *rec_ptr) {
+    rec_ptr_ = rec_ptr;
+  }
+  inline void SetNUnique(uint32_t n_unique) {
+    n_unique_ = n_unique;
+  }
+  inline void SetIndexType(uint32_t index_type) {
+    index_type_ = index_type;
+  }
+  void AddField(uint32_t main_type, uint32_t precise_type, uint32_t length);
 
-  void AddColumn(uint32_t mtype, uint32_t prtype, uint32_t len);
 
-  // Number of total columns (include system and non-virtual).
-  uint32_t n_total_cols_{};
+  void CalculateOffsets(uint32_t max_n);
 
-  // Number of system columns.
-  uint32_t n_sys_cols{};
-  // An array to store columns.
-  std::vector<ColumnInfo> cols_{};
+  void InitOffsetsCompOrdinary();
+
+
+  uint32_t GetExtraSize() const;
+
+  uint32_t GetDataSize() const;
+
+  byte *GetRecPtr() const {
+    return rec_ptr_;
+  }
+
+  uint32_t GetNOffset(uint32_t n) const;
 private:
-};
 
-void TableInfo::AddColumn(uint32_t mtype, uint32_t prtype, uint32_t len) {
-  ColumnInfo column{};
-  column.len = len;
-  column.prtype = prtype;
-  column.mtype = mtype;
-  column.ind = cols_.size();
-  cols_.push_back(column);
-}
-
-class IndexInfo {
-public:
-  uint32_t n_fields_{}; // 有多少列
+  byte *rec_ptr_ = nullptr; // 这条record的地址
+  uint32_t n_fields_{}; // 有多少列，包括系统的隐藏列
   uint32_t n_unique_{};
   uint32_t n_nullable_{}; // 有多少列可以为null
-  uint32_t type_{}; // index type
-  TableInfo table_{}; // 所属的表信息
-private:
-
+  uint32_t index_type_{}; // index type
+  std::vector<FieldInfo> fields_;
+  std::vector<uint32_t> offsets_; // 每一个column的偏移量
 };
+
+
 }
