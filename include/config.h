@@ -558,7 +558,7 @@ enum {
   BTR_NO_UNDO_LOG_FLAG = 1,
   /** do no record lock checking */
   BTR_NO_LOCKING_FLAG = 2,
-  /** sys fields will be found in the update vector or inserted
+  /** sys fields_ will be found in the update vector or inserted
   entry */
   BTR_KEEP_SYS_FLAG = 4,
   /** btr_cur_pessimistic_update() must keep cursor position
@@ -574,4 +574,25 @@ enum {
 };
 
 static constexpr uint32_t	UNIV_SQL_NULL = 0xFFFFFFFF;
+
+static constexpr uint32_t REC_MAX_N_FIELDS = 1024 - 1;
+
+static constexpr uint32_t REC_OLD_SHORT = 3;	/* This is single byte bit-field */
+static constexpr uint32_t REC_OLD_SHORT_MASK = 0x1UL;
+static constexpr uint32_t REC_OLD_SHORT_SHIFT = 0;
+
+static constexpr uint32_t REC_OLD_N_FIELDS = 4;
+static constexpr uint32_t REC_OLD_N_FIELDS_MASK = 0x7FEUL;
+static constexpr uint32_t REC_OLD_N_FIELDS_SHIFT = 1;
+
+static constexpr uint32_t REC_N_OLD_EXTRA_BYTES = 6;
+
+/** SQL null flag in a 1-byte offset of ROW_FORMAT=REDUNDANT records */
+static constexpr uint32_t REC_1BYTE_SQL_NULL_MASK = 0x80UL;
+/** SQL null flag in a 2-byte offset of ROW_FORMAT=REDUNDANT records */
+static constexpr uint32_t REC_2BYTE_SQL_NULL_MASK =	0x8000UL;
+
+/** In a 2-byte offset of ROW_FORMAT=REDUNDANT records, the second most
+significant bit denotes that the tail of a field is stored off-page. */
+static constexpr uint32_t REC_2BYTE_EXTERN_MASK = 0x4000UL;
 }

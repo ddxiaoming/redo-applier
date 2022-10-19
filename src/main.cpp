@@ -33,9 +33,10 @@ void CompareLog() {
   fmt::print("my:{}\n", my_line);
 }
 int main() {
-//  ApplySystem applySystem;
-  CompareLog();
-//  for (int i = 0; i < 256; ++i) {
-//    applySystem.PopulateHashMap();
-//  }
+  ApplySystem applySystem;
+//  CompareLog();
+  while (1) {
+    applySystem.PopulateHashMap();
+    applySystem.ApplyHashLogs();
+  }
 }

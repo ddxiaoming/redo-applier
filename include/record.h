@@ -101,4 +101,35 @@ byte *rec_get_nth_field(byte *rec,
                         const RecordInfo &rec_info,/*!< in: array returned by rec_get_offsets() */
                         uint32_t		n,	/*!< in: index of the field */
                         uint32_t*		len);
+
+bool rec_get_1byte_offs_flag(const byte*	rec);
+
+uint32_t rec_1_get_prev_field_end_info(const byte*	rec, uint32_t n);
+
+uint32_t rec_1_get_field_start_offs(const byte*	rec,uint32_t n);
+
+uint32_t rec_2_get_prev_field_end_info(const byte*	rec, uint32_t n);
+
+uint32_t rec_2_get_field_start_offs(const byte*	rec, uint32_t n);
+
+uint32_t rec_get_field_start_offs(const byte*	rec, uint32_t n);
+
+uint32_t rec_get_nth_field_size(const byte*	rec, uint32_t n);
+
+uint32_t rec_1_get_field_end_info(const byte*	rec, uint32_t n);
+
+void rec_1_set_field_end_info(byte* rec, uint32_t n, uint32_t info);
+
+uint32_t rec_2_get_field_end_info(const byte* rec, uint32_t n);
+
+void rec_2_set_field_end_info(byte* rec, uint32_t n, uint32_t info);
+
+void rec_set_nth_field_null_bit(byte* rec, uint32_t i, bool val);
+
+void rec_set_nth_field_sql_null(byte* rec, uint32_t n);
+
+uint32_t rec_offs_nth_sql_null(const RecordInfo &rec_info, uint32_t n);
+
+void rec_set_nth_field(byte* rec, const RecordInfo& rec_info,
+                       uint32_t n, const void*	data, uint32_t len);
 }

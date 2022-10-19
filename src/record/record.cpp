@@ -318,4 +318,307 @@ rec_get_nth_field_offs(
 byte *rec_get_nth_field(byte *rec, const RecordInfo &rec_info, uint32_t	n, uint32_t* len) {
   return rec + rec_get_nth_field_offs(rec_info, n, len);
 }
+/******************************************************//**
+The following function is used to test whether the data offsets in the record
+are stored in one-byte or two-byte format.
+@return TRUE if 1-byte form */
+bool
+rec_get_1byte_offs_flag(
+/*====================*/
+    const byte*	rec)	/*!< in: physical record */
+{
+  return(rec_get_bit_field_1(rec, REC_OLD_SHORT, REC_OLD_SHORT_MASK,
+                             REC_OLD_SHORT_SHIFT));
+}
+/******************************************************//**
+Returns the offset of n - 1th field end if the record is stored in the 1-byte
+offsets form. If the field is SQL null, the flag is ORed in the returned
+value. This function and the 2-byte counterpart are defined here because the
+C-compiler was not able to sum negative and positive constant offsets, and
+warned of constant arithmetic overflow within the compiler.
+@return offset of the start of the PREVIOUS field, SQL null flag ORed */
+uint32_t
+rec_1_get_prev_field_end_info(
+/*==========================*/
+    const byte*	rec,	/*!< in: record */
+    uint32_t n)	/*!< in: field index */
+{
+  return(mach_read_from_1(rec - (REC_N_OLD_EXTRA_BYTES + n)));
+}
+
+/******************************************************//**
+Returns the offset of nth field start if the record is stored in the 1-byte
+offsets form.
+@return offset of the start of the field */
+uint32_t
+rec_1_get_field_start_offs(
+/*=======================*/
+    const byte*	rec,	/*!< in: record */
+    uint32_t n)	/*!< in: field index */
+{
+  assert(rec_get_1byte_offs_flag(rec));
+
+  if (n == 0) {
+
+    return(0);
+  }
+
+  return(rec_1_get_prev_field_end_info(rec, n)
+         & ~REC_1BYTE_SQL_NULL_MASK);
+}
+
+/******************************************************//**
+Returns the offset of n - 1th field end if the record is stored in the 2-byte
+offsets form. If the field is SQL null, the flag is ORed in the returned
+value.
+@return offset of the start of the PREVIOUS field, SQL null flag ORed */
+uint32_t
+rec_2_get_prev_field_end_info(
+/*==========================*/
+    const byte*	rec,	/*!< in: record */
+    uint32_t n)	/*!< in: field index */
+{
+  return(mach_read_from_2(rec - (REC_N_OLD_EXTRA_BYTES + 2 * n)));
+}
+
+/******************************************************//**
+Returns the offset of nth field start if the record is stored in the 2-byte
+offsets form.
+@return offset of the start of the field */
+uint32_t
+rec_2_get_field_start_offs(
+/*=======================*/
+    const byte*	rec,	/*!< in: record */
+    uint32_t n)	/*!< in: field index */
+{
+  if (n == 0) {
+    return(0);
+  }
+
+  return(rec_2_get_prev_field_end_info(rec, n)
+         & ~(REC_2BYTE_SQL_NULL_MASK | REC_2BYTE_EXTERN_MASK));
+}
+
+/******************************************************//**
+The following function is used to read the offset of the start of a data field
+in the record. The start of an SQL null field is the end offset of the
+previous non-null field, or 0, if none exists. If n is the number of the last
+field + 1, then the end offset of the last field is returned.
+@return offset of the start of the field */
+uint32_t
+rec_get_field_start_offs(
+/*=====================*/
+    const byte*	rec,	/*!< in: record */
+    uint32_t n)	/*!< in: field index */
+{
+  assert(rec);
+
+  if (n == 0) {
+
+    return(0);
+  }
+
+  if (rec_get_1byte_offs_flag(rec)) {
+
+    return(rec_1_get_field_start_offs(rec, n));
+  }
+
+  return(rec_2_get_field_start_offs(rec, n));
+}
+
+/************************************************************//**
+Gets the physical size of an old-style field.
+Also an SQL null may have a field of size > 0,
+if the data type is of a fixed size.
+@return field size in bytes */
+uint32_t
+rec_get_nth_field_size(
+/*===================*/
+    const byte*	rec,	/*!< in: record */
+    uint32_t 		n)	/*!< in: index of the field */
+{
+  uint32_t	os;
+  uint32_t	next_os;
+
+  os = rec_get_field_start_offs(rec, n);
+  next_os = rec_get_field_start_offs(rec, n + 1);
+
+  return(next_os - os);
+}
+
+/**********************************************************************//**
+Writes an SQL null field full of zeros. */
+static inline
+void
+data_write_sql_null(
+/*================*/
+    byte*	data,	/*!< in: pointer to a buffer of size len */
+    uint32_t 	len)	/*!< in: SQL null size in bytes */
+{
+  std::memset(data, 0, len);
+}
+
+/******************************************************//**
+Returns the offset of nth field end if the record is stored in the 1-byte
+offsets form. If the field is SQL null, the flag is ORed in the returned
+value.
+@return offset of the start of the field, SQL null flag ORed */
+uint32_t
+rec_1_get_field_end_info(
+/*=====================*/
+    const byte*	rec,	/*!< in: record */
+    uint32_t 		n)	/*!< in: field index */
+{
+  return(mach_read_from_1(rec - (REC_N_OLD_EXTRA_BYTES + n + 1)));
+}
+
+/******************************************************//**
+Sets the field end info for the nth field if the record is stored in the
+1-byte format. */
+void
+rec_1_set_field_end_info(
+/*=====================*/
+    byte*	rec,	/*!< in: record */
+    uint32_t	n,	/*!< in: field index */
+    uint32_t 	info)	/*!< in: value to set */
+{
+  mach_write_to_1(rec - (REC_N_OLD_EXTRA_BYTES + n + 1), info);
+}
+
+/******************************************************//**
+Returns the offset of nth field end if the record is stored in the 2-byte
+offsets form. If the field is SQL null, the flag is ORed in the returned
+value.
+@return offset of the start of the field, SQL null flag and extern
+storage flag ORed */
+uint32_t
+rec_2_get_field_end_info(
+/*=====================*/
+    const byte*	rec,	/*!< in: record */
+    uint32_t n)	/*!< in: field index */
+{
+  return(mach_read_from_2(rec - (REC_N_OLD_EXTRA_BYTES + 2 * n + 2)));
+}
+
+/******************************************************//**
+Sets the field end info for the nth field if the record is stored in the
+2-byte format. */
+void
+rec_2_set_field_end_info(
+/*=====================*/
+    byte*	rec,	/*!< in: record */
+    uint32_t n,	/*!< in: field index */
+    uint32_t info)	/*!< in: value to set */
+{
+  mach_write_to_2(rec - (REC_N_OLD_EXTRA_BYTES + 2 * n + 2), info);
+}
+
+/***********************************************************//**
+Sets the value of the ith field SQL null bit of an old-style record. */
+void
+rec_set_nth_field_null_bit(
+/*=======================*/
+    byte*	rec,	/*!< in: record */
+    uint32_t 	i,	/*!< in: ith field */
+    bool	val)	/*!< in: value to set */
+{
+  uint32_t	info;
+
+  if (rec_get_1byte_offs_flag(rec)) {
+
+    info = rec_1_get_field_end_info(rec, i);
+
+    if (val) {
+      info = info | REC_1BYTE_SQL_NULL_MASK;
+    } else {
+      info = info & ~REC_1BYTE_SQL_NULL_MASK;
+    }
+
+    rec_1_set_field_end_info(rec, i, info);
+
+    return;
+  }
+
+  info = rec_2_get_field_end_info(rec, i);
+
+  if (val) {
+    info = info | REC_2BYTE_SQL_NULL_MASK;
+  } else {
+    info = info & ~REC_2BYTE_SQL_NULL_MASK;
+  }
+
+  rec_2_set_field_end_info(rec, i, info);
+}
+
+/***********************************************************//**
+Sets an old-style record field to SQL null.
+The physical size of the field is not changed. */
+void
+rec_set_nth_field_sql_null(
+/*=======================*/
+    byte*	rec,	/*!< in: record */
+    uint32_t n)	/*!< in: index of the field */
+{
+  uint32_t	offset;
+
+  offset = rec_get_field_start_offs(rec, n);
+
+  data_write_sql_null(rec + offset, rec_get_nth_field_size(rec, n));
+
+  rec_set_nth_field_null_bit(rec, n, true);
+}
+
+/******************************************************//**
+Returns nonzero if the SQL NULL bit is set in nth field of rec.
+@return nonzero if SQL NULL */
+uint32_t
+rec_offs_nth_sql_null(
+/*==================*/
+    const RecordInfo &rec_info,/*!< in: array returned by rec_get_offsets() */
+    uint32_t 		n)	/*!< in: nth field */
+{
+  return(rec_info.GetNOffset(REC_OFFS_HEADER_SIZE + n + 1) & REC_OFFS_SQL_NULL);
+}
+
+
+/***********************************************************//**
+This is used to modify the value of an already existing field in a record.
+The previous value must have exactly the same size as the new value. If len
+is UNIV_SQL_NULL then the field is treated as an SQL null.
+For records in ROW_FORMAT=COMPACT (new-style records), len must not be
+UNIV_SQL_NULL unless the field already is SQL null. */
+void
+rec_set_nth_field(
+/*==============*/
+    byte*		rec,	/*!< in: record */
+    const RecordInfo&	rec_info,/*!< in: array returned by rec_get_offsets() */
+    uint32_t 	n,	/*!< in: index number of the field */
+    const void*	data,	/*!< in: pointer to the data
+				if not SQL null */
+    uint32_t len)	/*!< in: length of the data or UNIV_SQL_NULL */
+{
+  byte*	data2;
+  uint32_t len2;
+
+  assert(rec);
+
+  if (len == UNIV_SQL_NULL) {
+    if (!rec_offs_nth_sql_null(rec_info, n)) {
+      rec_set_nth_field_sql_null(rec, n);
+    }
+
+    return;
+  }
+
+  data2 = rec_get_nth_field(rec, rec_info, n, &len2);
+  if (len2 == UNIV_SQL_NULL) {
+    rec_set_nth_field_null_bit(rec, n, false);
+    assert(len == rec_get_nth_field_size(rec, n));
+  } else {
+    assert(len2 == len);
+  }
+
+  std::memcpy(data2, data, len);
+}
+
 }

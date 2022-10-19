@@ -38,6 +38,7 @@ BufferPool::BufferPool() :
     ifs.read(reinterpret_cast<char *>(page_buf), DATA_PAGE_SIZE);
     uint32_t space_id = mach_read_from_4(page_buf + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID);
     space_id_2_file_name_.insert({space_id, PageReader(filename)});
+    std::cout << space_id << "->" << filename << std::endl;
     ifs.close();
   }
 
@@ -92,22 +93,6 @@ Page *BufferPool::NewPage(space_id_t space_id, page_id_t page_id) {
 }
 
 void BufferPool::Evict(int n) {
-//  std::mt19937 mt(std::random_device{}());
-//  std::uniform_int_distribution<int> distribution(0, BUFFER_POOL_SIZE);
-//  int i = 0;
-//  while (i < n) {
-//    int frame_id = distribution(mt);
-//    if (buffer_[frame_id].GetState() == Page::State::INVALID) continue;
-//    free_list_.emplace_back(frame_id);
-//    PageAddress address = frame_id_2_page_address_[frame_id];
-//    if (hash_map_.find(address.space_id_) != hash_map_.end()
-//        && hash_map_[address.space_id_].find(address.page_id_) != hash_map_[address.space_id_].end()) {
-//      hash_map_[address.space_id_].erase(address.page_id_);
-//    }
-//    frame_id_2_page_address_[frame_id].valid_ = false;
-//    buffer_[frame_id].SetState(Page::State::INVALID);
-//    ++i;
-//  }
   for (int i = 0; i < n; ++i) {
     if (lru_list_.empty()) return;
     // 把 buffer frame 从 LRU List 中移除
@@ -169,7 +154,7 @@ Page *BufferPool::ReadPageFromDisk(space_id_t space_id, page_id_t page_id) {
   buffer_[frame_id].SetState(Page::State::FROM_DISK);
   free_list_.pop_front();
 
-  assert(frame_id_2_page_address_[frame_id].in_lru_ = false);
+  assert(frame_id_2_page_address_[frame_id].in_lru_ == false);
 
   // 将page放入lru list
   frame_id_2_page_address_[frame_id].space_id_ = space_id;

@@ -44,8 +44,8 @@ public:
   Page();
   ~Page();
   lsn_t GetLSN() const {
-    return lsn_;
-//    return mach_read_from_8(data_ + FIL_PAGE_LSN);
+//    return lsn_;
+    return mach_read_from_8(data_ + FIL_PAGE_LSN);
   }
   void Reset() {
     std::memset(data_, 0, DATA_PAGE_SIZE);

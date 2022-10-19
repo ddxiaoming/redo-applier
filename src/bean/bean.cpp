@@ -1,4 +1,5 @@
 #include <iostream>
+#include <cstring>
 #include "bean.h"
 #include "record.h"
 namespace Lemon {
@@ -61,12 +62,14 @@ void RecordInfo::CalculateOffsets(uint32_t max_n) {
   switch (status) {
     case REC_STATUS_ORDINARY:
       n = n_fields_;
+      break;
     case REC_STATUS_NODE_PTR:
       if (index_type_ & DICT_CLUSTERED) {
         n = n_unique_ + 1;
       } else {
         n = n_fields_ + 1;
       }
+      break;
     case REC_STATUS_INFIMUM:
     case REC_STATUS_SUPREMUM:
       n = 1;
@@ -101,8 +104,8 @@ void RecordInfo::CalculateOffsets(uint32_t max_n) {
     case REC_STATUS_INFIMUM:
     case REC_STATUS_SUPREMUM:
       /* the field is 8 bytes long */
-      offsets_[0] = REC_N_NEW_EXTRA_BYTES | REC_OFFS_COMPACT;
-      offsets_[1] = 8;
+      offsets_[0 + REC_OFFS_HEADER_SIZE] = REC_N_NEW_EXTRA_BYTES | REC_OFFS_COMPACT;
+      offsets_[1 + REC_OFFS_HEADER_SIZE] = 8;
       return;
     case REC_STATUS_NODE_PTR:
       if (index_type_ & DICT_CLUSTERED) {
@@ -123,11 +126,11 @@ void RecordInfo::CalculateOffsets(uint32_t max_n) {
   offs = 0;
   null_mask = 1;
 
-  /* read the lengths of fields 0..n */
+  /* read the lengths of fields_ 0..n */
   do {
     uint32_t len;
     if (i == n_node_ptr_field) {
-      len = REC_NODE_PTR_SIZE;
+      len = offs += REC_NODE_PTR_SIZE;
       goto resolved;
     }
 
@@ -141,7 +144,7 @@ void RecordInfo::CalculateOffsets(uint32_t max_n) {
 
       if (*nulls & null_mask) {
         null_mask <<= 1;
-        /* No length is stored for NULL fields.
+        /* No length is stored for NULL fields_.
         We do not advance offs, and we set
         the length to zero and enable the
         SQL NULL flag in offsets[]. */
@@ -175,6 +178,7 @@ void RecordInfo::CalculateOffsets(uint32_t max_n) {
           must not contain externally
           stored columns.  Thus
           the "e" flag must be 0. */
+          assert(!(len & 0x4000));
           offs += len & 0x3fff;
           len = offs;
 
@@ -186,7 +190,7 @@ void RecordInfo::CalculateOffsets(uint32_t max_n) {
     } else {
       len = offs += fields_[i].fixed_length_;
     }
-    resolved:
+resolved:
     offsets_[REC_OFFS_HEADER_SIZE + i + 1] = len;
   } while (++i < offsets_[1]);
 
@@ -210,11 +214,12 @@ void RecordInfo::InitOffsetsCompOrdinary() {
   const byte*	lens = nulls - ((n_null + 7) / 8); // 变长字段长度列表的末端地址
   uint32_t null_mask = 1;
 
-  /* read the lengths of fields 0..n */
+  /* read the lengths of fields_ 0..n */
   do {
     uint32_t len;
 
     if (!(fields_[i].precise_type_ & DATA_NOT_NULL)) {
+      assert(n_null--);
       /* nullable field => read the null flag */
       if (!(byte) null_mask) {
         nulls--;
@@ -223,7 +228,7 @@ void RecordInfo::InitOffsetsCompOrdinary() {
 
       if (*nulls & null_mask) {
         null_mask <<= 1;
-        /* No length is stored for NULL fields.
+        /* No length is stored for NULL fields_.
         We do not advance offs, and we set
         the length to zero and enable the
         SQL NULL flag in offsets[]. */
@@ -282,5 +287,22 @@ uint32_t RecordInfo::GetDataSize() const {
 uint32_t RecordInfo::GetNOffset(uint32_t n) const {
   assert(offsets_.size() > n);
   return offsets_[n];
+}
+
+void UpdateInfo::UpdateFieldInfo::CopyData(const byte *source, uint32_t len) {
+  if (data_ != nullptr) {
+    delete[] data_;
+  }
+  data_ = new byte[len];
+  len_ = len;
+  std::memcpy(data_, source, len);
+}
+
+void UpdateInfo::UpdateFieldInfo::ResetData() {
+  if (data_ != nullptr) {
+    delete[] data_;
+  }
+  data_ = nullptr;
+  len_ = UNIV_SQL_NULL;
 }
 }

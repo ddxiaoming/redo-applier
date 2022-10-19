@@ -229,30 +229,59 @@ static byte*PARSE_MLOG_REC_SEC_DELETE_MARK(byte* ptr, const byte* end_ptr) {
 Parses the log data written by row_upd_index_write_log.
 @return log data end or NULL */
 byte*
-row_upd_index_parse(const byte*	ptr, const byte*	end_ptr) {
+row_upd_index_parse(const byte*	ptr, const byte* end_ptr, UpdateInfo *update_info) {
   if (end_ptr < ptr + 1) {
     return nullptr;
   }
+  uint32_t info_bits = mach_read_from_1(ptr);
   ptr++;
   uint32_t n_fields = mach_parse_compressed(&ptr, end_ptr);
   if (ptr == nullptr) {
     return nullptr;
   }
+
+  if (update_info != nullptr) {
+    update_info->n_fields_ = n_fields;
+    update_info->info_bits_ = info_bits;
+    update_info->fields_.resize(n_fields);
+  }
+
+  // 解析出每一个要更新的列
   for (int i = 0; i < n_fields; i++) {
-    mach_parse_compressed(&ptr, end_ptr);
+    uint32_t field_no = mach_parse_compressed(&ptr, end_ptr);
     if (ptr == nullptr) {
       return nullptr;
     }
+
+    if (field_no >= REC_MAX_N_FIELDS && update_info != nullptr) {
+      update_info->fields_[i].prtype_ |= DATA_VIRTUAL;
+      field_no -= REC_MAX_N_FIELDS;
+    }
+
+    if (update_info != nullptr) {
+      update_info->fields_[i].field_no_ = field_no;
+    }
+
+
     uint32_t len = mach_parse_compressed(&ptr, end_ptr);
     if (ptr == nullptr) {
       return nullptr;
     }
 
-    if (len != 0xFFFFFFFF) {
+    if (len != UNIV_SQL_NULL) {
       if (end_ptr < ptr + len) {
         return nullptr;
       }
+      // 拷贝新值
+      if (update_info != nullptr) {
+        update_info->fields_[i].CopyData(ptr, len);
+      }
       ptr += len;
+    } else {
+      // 新值是NULL
+      if (update_info != nullptr) {
+        update_info->fields_[i].ResetData();
+      }
     }
   }
   return(const_cast<byte*>(ptr));
@@ -281,7 +310,7 @@ PARSE_MLOG_REC_UPDATE_IN_PLACE(byte* ptr, const byte* end_ptr) {
 
   assert(rec_offset <= DATA_PAGE_SIZE);
 
-  ptr = row_upd_index_parse(ptr, end_ptr);
+  ptr = row_upd_index_parse(ptr, end_ptr, nullptr);
 
   return(ptr);
 }
@@ -950,8 +979,8 @@ static byte* ParseRecInfoFromLog(const byte *ptr, const byte *end_ptr, RecordInf
     uint32_t len = mach_read_from_2(ptr);
     ptr += 2;
     /* The high-order bit of len is the NOT NULL flag;
-    the rest is 0 or 0x7fff for variable-length fields,
-    and 1..0x7ffe for fixed-length fields. */
+    the rest is 0 or 0x7fff for variable-length fields_,
+    and 1..0x7ffe for fixed-length fields_. */
     rec_info.AddField(((len + 1) & 0x7fff) <= 1 ? DATA_BINARY : DATA_FIXBINARY,
                       len & 0x8000 ? DATA_NOT_NULL : 0,
                       len & 0x7fff);
@@ -1715,7 +1744,7 @@ void ApplyCompRecClusterDeleteMark(const LogEntry &log, Page *page) {
 
   /* We do not need to reserve search latch, as the page
   is only being recovered, and there cannot be a hash index to
-  it. Besides, these fields are being updated in place
+  it. Besides, these fields_ are being updated in place
   and the adaptive hash index does not depend on them. */
 
   btr_rec_set_deleted_flag(rec, val);
@@ -1728,25 +1757,54 @@ void ApplyCompRecClusterDeleteMark(const LogEntry &log, Page *page) {
   }
 }
 
+/***********************************************************//**
+Replaces the new column values stored in the update vector to the
+record given. No field size changes are allowed. This function is
+usually invoked on a clustered rec_info. The only use case for a
+secondary rec_info is row_ins_sec_index_entry_by_modify() or its
+counterpart in ibuf_insert_to_index_page(). */
+void
+row_upd_rec_in_place(
+/*=================*/
+    byte*		rec,	/*!< in/out: record where replaced */
+    RecordInfo	&rec_info,	/*!< in: the index the record belongs to */
+    const UpdateInfo &update	/*!< in: update vector */
+    )
+{
+
+  rec_set_info_bits_new(rec, update.info_bits_);
+
+  uint32_t n_fields = update.n_fields_;
+
+  for (int i = 0; i < n_fields; i++) {
+    /* No need to update virtual columns for non-virtual rec_info */
+    if (((update.fields_[i].prtype_ & DATA_VIRTUAL) == DATA_VIRTUAL)
+        && !(rec_info.Type() & DICT_VIRTUAL)) {
+      continue;
+    }
+
+    rec_set_nth_field(rec, rec_info, update.fields_[i].field_no_,
+                      update.fields_[i].data_,
+                      update.fields_[i].len_);
+  }
+}
 void ApplyCompRecUpdateInPlace(const LogEntry &log, Page *page) {
-  RecordInfo deleted_rec_info;
+  RecordInfo update_rec_info;
   const byte *ptr = log.log_body_start_ptr_;
   const byte *end_ptr = log.log_body_end_ptr_;
-  ptr = ParseRecInfoFromLog(ptr, end_ptr, deleted_rec_info);
+  ptr = ParseRecInfoFromLog(ptr, end_ptr, update_rec_info);
 
   uint32_t flags;
-  byte*		rec;
-  upd_t*		update;
-  ulint		pos;
+  byte*	rec;
+  UpdateInfo update;
+  uint32_t pos;
   trx_id_t	trx_id;
   roll_ptr_t	roll_ptr;
-  ulint		rec_offset;
-  mem_heap_t*	heap;
-  ulint*		offsets;
+  uint32_t		rec_offset;
 
   if (end_ptr < ptr + 1) {
 
-    return(NULL);
+    return;
   }
 
   flags = mach_read_from_1(ptr);
@@ -1754,49 +1812,43 @@ void ApplyCompRecUpdateInPlace(const LogEntry &log, Page *page) {
 
   ptr = row_upd_parse_sys_vals(ptr, end_ptr, &pos, &trx_id, &roll_ptr);
 
-  if (ptr == NULL) {
+  if (ptr == nullptr) {
 
-    return(NULL);
+    return;
   }
 
   if (end_ptr < ptr + 2) {
 
-    return(NULL);
+    return;
   }
 
+  // 解析出需要更新的记录的偏移量
   rec_offset = mach_read_from_2(ptr);
   ptr += 2;
 
-  ut_a(rec_offset <= UNIV_PAGE_SIZE);
+  assert(rec_offset <= DATA_PAGE_SIZE);
 
-  heap = mem_heap_create(256);
 
-  ptr = row_upd_index_parse(ptr, end_ptr, heap, &update);
+  ptr = row_upd_index_parse(ptr, end_ptr, &update);
 
-  if (!ptr || !page) {
+  if (!ptr || !page->GetData()) {
 
-    goto func_exit;
+    return;
   }
 
-  ut_a((ibool)!!page_is_comp(page) == dict_table_is_comp(index->table));
-  rec = page + rec_offset;
+  // 解析出要更新的record的地址
+  rec = page->GetData() + rec_offset;
 
-  /* We do not need to reserve search latch, as the page is only
-  being recovered, and there cannot be a hash index to it. */
-
-  offsets = rec_get_offsets(rec, index, NULL, ULINT_UNDEFINED, &heap);
+  update_rec_info.SetRecPtr(rec);
+  update_rec_info.CalculateOffsets(ULINT_UNDEFINED);
 
   if (!(flags & BTR_KEEP_SYS_FLAG)) {
-    row_upd_rec_sys_fields_in_recovery(rec, page_zip, offsets,
-                                       pos, trx_id, roll_ptr);
+    row_upd_rec_sys_fields_in_recovery(rec, update_rec_info, pos, trx_id, roll_ptr);
   }
 
-  row_upd_rec_in_place(rec, index, offsets, update, page_zip);
+  // update
+  row_upd_rec_in_place(rec, update_rec_info, update);
 
-  func_exit:
-  mem_heap_free(heap);
-
-  return(ptr);
 }
 // Apply MLOG_COMP_REC_SEC_DELETE_MARK log.
 void ApplyCompRecSecondDeleteMark(const LogEntry &log, Page *page) {
@@ -2058,7 +2110,7 @@ uint32_t ParseSingleLogRecord(LOG_TYPE &type,
   if (new_ptr == nullptr) {
     return 0;
   }
-  *body = const_cast<byte *>(ptr);
+  *body = const_cast<byte *>(new_ptr);
   // 4. 解析log body
   new_ptr = ParseSingleLogRecordBody(type, const_cast<byte *>(new_ptr), end_ptr, space_id, page_id);
 

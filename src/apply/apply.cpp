@@ -63,13 +63,13 @@ bool ApplySystem::PopulateHashMap() {
   // 1.填充parse buffer
   uint32_t end_page_id = next_fetch_page_id_ + (parse_buf_size_ - parse_buf_content_size_) / DATA_PAGE_SIZE;
   for (; next_fetch_page_id_ < end_page_id; ++next_fetch_page_id_) {
-    std::cout << "next_fetch_page_id_:" << next_fetch_page_id_ << std::endl;
+//    std::cout << "next_fetch_page_id_:" << next_fetch_page_id_ << std::endl;
     log_stream_.seekg(static_cast<std::streamoff>(next_fetch_page_id_ * DATA_PAGE_SIZE));
     // 读一个Page放到buf里面去
     log_stream_.read(reinterpret_cast<char *>(buf), DATA_PAGE_SIZE);
 
     for (int block = 0; block < static_cast<int>((DATA_PAGE_SIZE / LOG_BLOCK_SIZE)); ++block) {
-      std::cout << "block:" << block << std::endl;
+//      std::cout << "block:" << block << std::endl;
       if (next_fetch_page_id_ == 0 && block < 4) continue; // 跳过前面4个block
       auto hdr_no = ~LOG_BLOCK_FLUSH_BIT_MASK & mach_read_from_4(buf + block * LOG_BLOCK_SIZE);
       auto data_len = mach_read_from_2(buf + block * LOG_BLOCK_SIZE + LOG_BLOCK_HDR_DATA_LEN);
@@ -115,16 +115,19 @@ bool ApplySystem::PopulateHashMap() {
     LOG_TYPE	type;
     byte *log_body_ptr = nullptr;
     len = ParseSingleLogRecord(type, start_ptr, end_ptr, space_id, page_id, &log_body_ptr);
-    start_ptr += len;
+
     if (len == 0) break;
     // 加入哈希表
     hash_map_[space_id][page_id].emplace_back(type, space_id, page_id,
                                               next_lsn_, len, log_body_ptr,
-                                              log_body_ptr + len);
+                                              start_ptr + len);
+
+//    ofs << "lsn = " << next_lsn_ << " type = " << GetLogString(type)
+//        << ", space_id = " << space_id << ", page_id = "
+//        << page_id << ", data_len = " << len << std::endl;
+
+    start_ptr += len;
     next_lsn_ += len;
-    ofs << "type = " << GetLogString(type)
-        << ", space_id = " << space_id << ", page_id = "
-        << page_id << ", data_len = " << len << std::endl;
   }
 
 
@@ -140,6 +143,9 @@ bool ApplySystem::ApplyHashLogs() {
 
     auto space_id = spaces_logs.first;
 
+    if (!(space_id >= 23 && space_id <= 42)) {
+      continue;
+    }
     for (const auto &pages_logs: spaces_logs.second) {
 
       auto page_id = pages_logs.first;
@@ -147,10 +153,16 @@ bool ApplySystem::ApplyHashLogs() {
       // 获取需要的page
       Page *page = buffer_pool.GetPage(space_id, page_id);
       lsn_t page_lsn = page->GetLSN();
+      std::cout << page_lsn << std::endl;
 
       for (const auto &log: pages_logs.second) {
         lsn_t log_lsn = log.log_start_lsn_;
-
+        if (log_lsn != 13184934) {
+          continue;
+        }
+        if (log_lsn <= checkpoint_lsn_) {
+          continue;
+        }
         // skip!
         if (page_lsn >= log_lsn) {
           std::cout << "This page(space_id = " << space_id << ", page_id = "
@@ -171,7 +183,7 @@ bool ApplySystem::ApplyHashLogs() {
   return true;
 }
 
-bool ApplySystem::ApplyOneLog(Page *page, const LogEntry &log) {
+void ApplySystem::ApplyOneLog(Page *page, const LogEntry &log) {
   switch (log.type_) {
     case MLOG_1BYTE:
     case MLOG_2BYTES:
@@ -188,7 +200,6 @@ bool ApplySystem::ApplyOneLog(Page *page, const LogEntry &log) {
     case MLOG_INIT_FILE_PAGE2:
       ApplyInitFilePage2(log, page);
       break;
-    default:
     case MLOG_COMP_REC_INSERT:
       ApplyCompRecInsert(log, page);
       break;
@@ -201,8 +212,11 @@ bool ApplySystem::ApplyOneLog(Page *page, const LogEntry &log) {
     case MLOG_COMP_REC_UPDATE_IN_PLACE:
       ApplyCompRecUpdateInPlace(log, page);
       break;
+    default:
+      // skip
+      std::cout << "We can not apply " << GetLogString(log.type_) << ", just skipped." << std::endl;
+      break;
   }
-  return false;
 }
 //
 //static void ApplyMLOG_INIT_FILE_PAGE2(unsigned char *page, const LogEntry &log) {

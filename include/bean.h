@@ -74,6 +74,9 @@ public:
     return rec_ptr_;
   }
 
+  uint32_t Type() const {
+    return index_type_;
+  }
   uint32_t GetNOffset(uint32_t n) const;
 private:
 
@@ -82,9 +85,31 @@ private:
   uint32_t n_unique_{};
   uint32_t n_nullable_{}; // 有多少列可以为null
   uint32_t index_type_{}; // index type
-  std::vector<FieldInfo> fields_;
-  std::vector<uint32_t> offsets_; // 每一个column的偏移量
+  std::vector<FieldInfo> fields_{};
+  std::vector<uint32_t> offsets_{}; // 每一个column的偏移量
 };
 
+class UpdateInfo {
+public:
+  class UpdateFieldInfo {
+  public:
+    void ResetData();
+    void CopyData(const byte *source, uint32_t len);
+    ~UpdateFieldInfo() {
+      if (data_ != nullptr) {
+        delete[] data_;
+      }
+    }
+    uint32_t field_no_ : 16;
+    uint32_t orig_len_: 16;
+    byte *data_; // 新值
+    uint32_t prtype_; // 这一列的precise type;
+    uint32_t len_; /*!< data length; UNIV_SQL_NULL if SQL null */
+  };
+  uint32_t info_bits_;	/*!< new value of info bits to record; default is 0 */
+  uint32_t n_fields_; /*!< number of update fields_ */
+  std::vector<UpdateFieldInfo> fields_;
+private:
+};
 
 }

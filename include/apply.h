@@ -23,7 +23,7 @@ public:
   }
   bool PopulateHashMap();
   bool ApplyHashLogs();
-  bool ApplyOneLog(Page *page, const LogEntry &log);
+  static void ApplyOneLog(Page *page, const LogEntry &log);
 private:
   // 在恢复page时使用的哈希表
   std::unordered_map<space_id_t, std::unordered_map<page_id_t, std::list<LogEntry>>> hash_map_;
@@ -69,7 +69,7 @@ private:
   // 用来读取log文件的流
   std::ifstream log_stream_;
 
-  std::ofstream ofs{"/home/lemon/redolog2.txt"};
+//  std::ofstream ofs{"/home/lemon/redolog2.txt"};
 };
 
 }
