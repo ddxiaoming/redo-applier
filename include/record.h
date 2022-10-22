@@ -132,4 +132,6 @@ uint32_t rec_offs_nth_sql_null(const RecordInfo &rec_info, uint32_t n);
 
 void rec_set_nth_field(byte* rec, const RecordInfo& rec_info,
                        uint32_t n, const void*	data, uint32_t len);
+
+uint32_t rec_get_deleted_flag(const byte*	rec);
 }

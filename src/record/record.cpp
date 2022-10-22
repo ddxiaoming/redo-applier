@@ -1,6 +1,7 @@
 #include "record.h"
 #include <cassert>
 #include <cstring>
+#include <iostream>
 #include "utility.h"
 namespace Lemon {
 
@@ -226,9 +227,10 @@ rec_set_next_offs_new(
   } else {
 
     // TODO 可能有问题的地方
-    field_value = (uint32_t)
-        ((int32_t) next
-         - (int32_t) (rec - page));
+    field_value = next;
+//    field_value = (uint32_t)
+//        ((int32_t) next
+//         - (int32_t) (rec - page));
     field_value &= REC_NEXT_MASK;
   }
 
@@ -611,6 +613,7 @@ rec_set_nth_field(
   }
 
   data2 = rec_get_nth_field(rec, rec_info, n, &len2);
+  std::cout << data2 << std::endl;
   if (len2 == UNIV_SQL_NULL) {
     rec_set_nth_field_null_bit(rec, n, false);
     assert(len == rec_get_nth_field_size(rec, n));
@@ -619,6 +622,16 @@ rec_set_nth_field(
   }
 
   std::memcpy(data2, data, len);
+  data2 = rec_get_nth_field(rec, rec_info, n, &len2);
+  std::cout << data2 << std::endl;
 }
+
+
+uint32_t rec_get_deleted_flag(const byte*	rec) {
+  rec_get_bit_field_1(rec, REC_NEW_INFO_BITS,
+                      REC_INFO_DELETED_FLAG,
+                      REC_INFO_BITS_SHIFT);
+}
+
 
 }

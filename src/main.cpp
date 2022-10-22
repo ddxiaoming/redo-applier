@@ -34,6 +34,7 @@ void CompareLog() {
 }
 int main() {
   ApplySystem applySystem;
+  applySystem.SetSaveLogs(false);
 //  CompareLog();
   while (1) {
     applySystem.PopulateHashMap();

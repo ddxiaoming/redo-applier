@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(REDO_APPLIER)
 set(CMAKE_CXX_STANDARD 14)
-
 set(SOURCE_FILE
         ${PROJECT_SOURCE_DIR}/src/main.cpp
         ${PROJECT_SOURCE_DIR}/src/apply/apply.cpp

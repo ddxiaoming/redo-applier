@@ -461,7 +461,6 @@ while CHAR for DATA_POINT */
 static constexpr uint32_t DATA_GEOMETRY	= 14;	/* geometry datatype of variable length */
 /* The following two are disabled temporarily, we won't create them in
 get_innobase_type_from_mysql_type().
-TODO: We will enable DATA_POINT/them when we come to the fixed-length POINT
 again. */
 static constexpr uint32_t DATA_POINT = 15;	/* geometry datatype of fixed length POINT */
 static constexpr uint32_t DATA_VAR_POINT = 16;	/* geometry datatype of variable length
@@ -595,4 +594,8 @@ static constexpr uint32_t REC_2BYTE_SQL_NULL_MASK =	0x8000UL;
 /** In a 2-byte offset of ROW_FORMAT=REDUNDANT records, the second most
 significant bit denotes that the tail of a field is stored off-page. */
 static constexpr uint32_t REC_2BYTE_EXTERN_MASK = 0x4000UL;
+
+static constexpr uint32_t BUF_NO_CHECKSUM_MAGIC = 0xDEADBEEFUL;
+
+static constexpr uint32_t FIL_PAGE_SPACE_OR_CHKSUM = 0;
 }

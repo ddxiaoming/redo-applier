@@ -17,14 +17,17 @@ ApplySystem::ApplySystem() :
     checkpoint_lsn_(0),
     checkpoint_no_(0),
     checkpoint_offset_(0),
-    log_file_size_(static_cast<uint64_t>(10) * 1024 * 1024 * 1024), // 10GB
+    log_file_size_(static_cast<uint64_t>(1) * 1024 * 1024 * 1024), // 1GB
     next_fetch_page_id_(0),
     next_fetch_block_(-1),
     log_max_page_id_(log_file_size_ / DATA_PAGE_SIZE),
     finished_(false),
     next_lsn_(LOG_START_LSN),
     log_file_path_("/home/lemon/mysql/data/ib_logfile0"),
-    log_stream_(log_file_path_, std::ios::in | std::ios::binary)
+    log_stream_(log_file_path_, std::ios::in | std::ios::binary),
+    summary_ofs_("/home/lemon/mysql/parsed_logs/log_summary.txt"),
+    table_ofs_(),
+    save_logs_(false)
 {
   // 1.填充meta_data_buf
   log_stream_.read(reinterpret_cast<char *>(meta_data_buf_), meta_data_buf_size_);
@@ -50,6 +53,8 @@ ApplySystem::~ApplySystem() {
   meta_data_buf_ = nullptr;
 }
 
+
+
 bool ApplySystem::PopulateHashMap() {
 
   if (next_fetch_page_id_ > log_max_page_id_) {
@@ -58,8 +63,10 @@ bool ApplySystem::PopulateHashMap() {
     return false;
   }
   unsigned char buf[DATA_PAGE_SIZE];
-  hash_map_.clear();
 
+  if (!save_logs_) {
+    hash_map_.clear();
+  }
   // 1.填充parse buffer
   uint32_t end_page_id = next_fetch_page_id_ + (parse_buf_size_ - parse_buf_content_size_) / DATA_PAGE_SIZE;
   for (; next_fetch_page_id_ < end_page_id; ++next_fetch_page_id_) {
@@ -81,7 +88,7 @@ bool ApplySystem::PopulateHashMap() {
         std::cout << "waiting for (page_id = "
                   << next_fetch_page_id_ << ", block = "
                   << block << ") be filled." << std::endl;
-
+        SaveLogs();
         unsigned char tmp_buf[DATA_PAGE_SIZE];
         while (data_len != 512) {
           using namespace std::chrono_literals;
@@ -122,9 +129,12 @@ bool ApplySystem::PopulateHashMap() {
                                               next_lsn_, len, log_body_ptr,
                                               start_ptr + len);
 
-//    ofs << "lsn = " << next_lsn_ << " type = " << GetLogString(type)
-//        << ", space_id = " << space_id << ", page_id = "
-//        << page_id << ", data_len = " << len << std::endl;
+    if (save_logs_) {
+      summary_ofs_ << "lsn = " << next_lsn_ << ", type = " << GetLogString(type)
+                   << ", space_id = " << space_id << ", page_id = "
+                   << page_id << ", data_len = " << len << std::endl;
+    }
+
 
     start_ptr += len;
     next_lsn_ += len;
@@ -143,36 +153,51 @@ bool ApplySystem::ApplyHashLogs() {
 
     auto space_id = spaces_logs.first;
 
-    if (!(space_id >= 23 && space_id <= 42)) {
+    if (space_id != 23) {
       continue;
     }
     for (const auto &pages_logs: spaces_logs.second) {
 
       auto page_id = pages_logs.first;
 
+      if (page_id != 37) {
+        continue;
+      }
+
       // 获取需要的page
       Page *page = buffer_pool.GetPage(space_id, page_id);
+
+      if (page == nullptr) continue;
       lsn_t page_lsn = page->GetLSN();
-      std::cout << page_lsn << std::endl;
+      std::cout << "space_id = " << page->GetSpaceId() << ", page_id = " << page->GetPageId() << ", page_lsn = " << page_lsn << std::endl;
 
       for (const auto &log: pages_logs.second) {
         lsn_t log_lsn = log.log_start_lsn_;
-        if (log_lsn != 13184934) {
-          continue;
-        }
+        // 13180218 17377694
+//        if (log_lsn != 24884389) {
+//          continue;
+//        }
         if (log_lsn <= checkpoint_lsn_) {
           continue;
         }
         // skip!
-        if (page_lsn >= log_lsn) {
-          std::cout << "This page(space_id = " << space_id << ", page_id = "
-                    << page_id << "lsn = " << page_lsn <<") is newer than log, skip apply phase." << std::endl;
-          break;
-        }
+//        if (page_lsn >= log_lsn) {
+//          std::cout << "This page(space_id = " << space_id << ", page_id = "
+//                    << page_id << "lsn = " << page_lsn <<") is newer than log, skip apply phase." << std::endl;
+//          break;
+//        }
+//        std::cout << page->GetSpaceId() << std::endl;
+//        std::cout << page->GetPageId() << std::endl;
+//        std::cout << page->GetCheckSum() << std::endl;
         ApplyOneLog(page, log);
         page->WritePageLSN(log_lsn + log.log_len_);
-        std::cout << "Applied log(type = " << GetLogString(log.type_) << ", space_id = "
-                  << log.space_id_ << "page_id = " << log.page_id_ <<") to page." << std::endl;
+        page->WriteCheckSum(BUF_NO_CHECKSUM_MAGIC);
+        if (log_lsn == 30228915) {
+          buffer_pool.WriteBack(space_id, page_id);
+        }
+//        buffer_pool.WriteBack(space_id, page_id);
+//        std::cout << "Applied log(type = " << GetLogString(log.type_) << ", space_id = "
+//                  << log.space_id_ << "page_id = " << log.page_id_ <<") to page." << std::endl;
 //        ofs << "type = " << GetLogString(log.index_type_)
 //            << ", space_id = " << log.space_id_ << ", page_id = "
 //            << log.page_id_ << ", data_len = " << log.log_body_len_ << ", lsn = " << log.log_start_lsn_ << std::endl;
@@ -216,6 +241,41 @@ void ApplySystem::ApplyOneLog(Page *page, const LogEntry &log) {
       // skip
       std::cout << "We can not apply " << GetLogString(log.type_) << ", just skipped." << std::endl;
       break;
+  }
+}
+
+void ApplySystem::SaveLogs() {
+  static std::unordered_map<std::string, int> open_times; // 记录文件被打开的次数
+  if (save_logs_) {
+    for (const auto &spaces_logs: hash_map_) {
+      // 打开文件
+      space_id_t space_id = spaces_logs.first;
+      std::string output_file_name("/home/lemon/mysql/parsed_logs/");
+      std::string table_name = buffer_pool.GetFilename(space_id);
+      table_name = table_name.substr(table_name.rfind('/') + 1);
+      table_name = table_name.substr(0, table_name.size() - 4);
+      if (table_name.empty()) {
+        continue;
+      }
+      output_file_name += table_name;
+      output_file_name += "_log.txt";
+      if (open_times[output_file_name] == 0) {
+        table_ofs_.open(output_file_name, std::ios::out | std::ios::trunc);
+      } else {
+        table_ofs_.open(output_file_name, std::ios::out | std::ios::app);
+      }
+      open_times[output_file_name]++;
+      for (const auto &pages_logs: spaces_logs.second) {
+        page_id_t page_id = pages_logs.first;
+        for (const auto &log: pages_logs.second) {
+          table_ofs_ << "lsn = " << log.log_start_lsn_ << ", type = " << GetLogString(log.type_)
+                     << ", space_id = " << space_id << ", page_id = "
+                     << page_id << ", data_len = " << log.log_len_ << std::endl;
+        }
+      }
+      // 关闭文件
+      table_ofs_.close();
+    }
   }
 }
 //

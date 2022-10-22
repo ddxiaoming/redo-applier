@@ -931,10 +931,8 @@ void ApplyInitFilePage2(const LogEntry &log, Page *page) {
   std::memset(page_data, 0, DATA_PAGE_SIZE);
   // 写入page id
   mach_write_to_4(page_data + FIL_PAGE_OFFSET, log.page_id_);
-  page->SetPageId(log.page_id_);
   // 写入space id
   mach_write_to_4(page_data + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID, log.space_id_);
-  page->SetSpaceId(log.space_id_);
 }
 
 /**
@@ -1153,7 +1151,7 @@ Gets the pointer to the next record on the page.
 @return pointer to next record */
 static
 byte*
-page_rec_get_next(byte* page, const byte *	rec)
+page_rec_get_next(byte* page, const byte * rec)
 {
   uint32_t 		offs;
   // TODO 可能有问题的地方
@@ -1747,6 +1745,8 @@ void ApplyCompRecClusterDeleteMark(const LogEntry &log, Page *page) {
   it. Besides, these fields_ are being updated in place
   and the adaptive hash index does not depend on them. */
 
+  uint32_t deleted_flag = rec_get_deleted_flag(rec);
+  std::cout << "before apply, delete mark is " << deleted_flag << std::endl;
   btr_rec_set_deleted_flag(rec, val);
 
   if (!(flags & BTR_KEEP_SYS_FLAG)) {
@@ -1755,6 +1755,8 @@ void ApplyCompRecClusterDeleteMark(const LogEntry &log, Page *page) {
     deleted_rec_info.CalculateOffsets(ULINT_UNDEFINED);
     row_upd_rec_sys_fields_in_recovery(rec, deleted_rec_info, pos, trx_id, roll_ptr);
   }
+  deleted_flag = rec_get_deleted_flag(rec);
+  std::cout << "after apply, delete mark is " << deleted_flag << std::endl;
 }
 
 /***********************************************************//**

@@ -3,11 +3,9 @@
 #include <random>
 #include <cstring>
 #include <cassert>
+#include <fstream>
 namespace Lemon {
 Page::Page() :
-    space_id_(),
-    page_id_(),
-    lsn_(),
     data_(new unsigned char[DATA_PAGE_SIZE]),
     state_(State::INVALID) {
 
@@ -20,26 +18,31 @@ Page::~Page() {
   }
 }
 
+void Page::WriteCheckSum(uint32_t checksum) {
+  mach_write_to_4(data_ + FIL_PAGE_SPACE_OR_CHKSUM, checksum);
+  mach_write_to_4(data_ + DATA_PAGE_SIZE - FIL_PAGE_END_LSN_OLD_CHKSUM, checksum);
+}
+
 BufferPool::BufferPool() :
     lru_list_(),
     hash_map_(),
     buffer_(new Page[BUFFER_POOL_SIZE]),
-    data_path_("/home/lemon/mysql/data/"),
+    data_path_("/home/lemon/mysql/data"),
     space_id_2_file_name_(),
     free_list_(), frame_id_2_page_address_(BUFFER_POOL_SIZE) {
 
   // 1. 构建映射表
   std::vector<std::string> filenames;
   TravelDirectory(data_path_, ".ibd", filenames);
+  byte page_buf[DATA_PAGE_SIZE];
   std::ifstream ifs;
-  unsigned char page_buf[DATA_PAGE_SIZE];
   for (auto & filename : filenames) {
-    ifs.open(filename, std::ios::in | std::ios::binary);
+    ifs.open(filename, std::ios::binary | std::ios::in);
     ifs.read(reinterpret_cast<char *>(page_buf), DATA_PAGE_SIZE);
     uint32_t space_id = mach_read_from_4(page_buf + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID);
-    space_id_2_file_name_.insert({space_id, PageReader(filename)});
-    std::cout << space_id << "->" << filename << std::endl;
     ifs.close();
+    space_id_2_file_name_.insert({space_id, PageReaderWriter(filename)});
+    std::cout << space_id << "->" << filename << std::endl;
   }
 
   // 2. 初始化free_list_
@@ -76,8 +79,6 @@ Page *BufferPool::NewPage(space_id_t space_id, page_id_t page_id) {
 
   // 初始化申请到的buffer frame
   buffer_[frame_id].Reset();
-  buffer_[frame_id].SetSpaceId(space_id);
-  buffer_[frame_id].SetPageId(page_id);
   buffer_[frame_id].SetState(Page::State::FROM_BUFFER);
 
   // 新创建的page加入lru list
@@ -145,12 +146,9 @@ Page *BufferPool::ReadPageFromDisk(space_id_t space_id, page_id_t page_id) {
 
   // 从free list中分配一个frame，从磁盘读取page，填充这个frame
   frame_id_t frame_id = free_list_.front();
-  std::ifstream &ifs = space_id_2_file_name_[space_id].stream_;
-  ifs.seekg(static_cast<std::streamoff>(page_id * DATA_PAGE_SIZE));
-  ifs.read(reinterpret_cast<char *>(buffer_[frame_id].GetData()), DATA_PAGE_SIZE);
-  buffer_[frame_id].SetLSN();
-  buffer_[frame_id].SetPageId();
-  buffer_[frame_id].SetSpaceId();
+  auto fs = space_id_2_file_name_[space_id].stream_;
+  fs->seekg(static_cast<std::streamoff>(page_id * DATA_PAGE_SIZE));
+  fs->read(reinterpret_cast<char *>(buffer_[frame_id].GetData()), DATA_PAGE_SIZE);
   buffer_[frame_id].SetState(Page::State::FROM_DISK);
   free_list_.pop_front();
 
@@ -163,6 +161,20 @@ Page *BufferPool::ReadPageFromDisk(space_id_t space_id, page_id_t page_id) {
   lru_list_.emplace_front(frame_id);
   hash_map_[space_id][page_id] = lru_list_.begin();
   return &buffer_[frame_id];
+}
+
+bool BufferPool::WriteBack(space_id_t space_id, page_id_t page_id) {
+  // 找找看是不是在buffer pool中
+  if (hash_map_.find(space_id) != hash_map_.end() && hash_map_[space_id].find(page_id) != hash_map_[space_id].end()) {
+    frame_id_t frame_id = *(hash_map_[space_id][page_id]);
+    auto fs = space_id_2_file_name_[space_id].stream_;
+    fs->seekp(static_cast<std::streamoff>(page_id * DATA_PAGE_SIZE));
+    fs->write(reinterpret_cast<char *>(buffer_[frame_id].GetData()), DATA_PAGE_SIZE);
+    return true;
+  }
+
+  std::cout << "Page(space_id = " << space_id << ", page_id = " << page_id << ") is not in buffer pool." << std::endl;
+  return false;
 }
 
 BufferPool buffer_pool;
