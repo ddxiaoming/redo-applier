@@ -48,14 +48,10 @@ uint32_t rec_get_heap_no_new(const byte*	rec);
 
 
 const byte*
-rec_get_next_ptr_const(
-/*===================*/
-    const byte*	rec);
+rec_get_next_ptr_const(const byte *page, const byte* rec);
 
 byte*
-rec_get_next_ptr(
-/*=============*/
-    byte*	rec);
+rec_get_next_ptr(const byte *page, byte* rec);
 
 byte*
 rec_copy(

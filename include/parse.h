@@ -70,6 +70,10 @@ void ApplyCompRecInsert(const LogEntry &log, Page *page);
  */
 void ApplyCompRecClusterDeleteMark(const LogEntry &log, Page *page);
 
+
+void ApplyRecSecondDeleteMark(const LogEntry &log, Page *page);
+
+
 /**
  * Apply MLOG_COMP_REC_UPDATE_IN_PLACE
  * @param log
@@ -79,4 +83,14 @@ void ApplyCompRecUpdateInPlace(const LogEntry &log, Page *page);
 
 
 void ApplyCompRecSecondDeleteMark(const LogEntry &log, Page *page);
+
+void ApplyCompRecDelete(const LogEntry &log, Page *page);
+
+void ApplyCompListEndCopyCreated(const LogEntry &log, Page *page);
+
+void ApplyCompPageReorganize(const LogEntry &log, Page *page);
+
+void ApplyCompListDelete(const LogEntry &log, Page *page);
+
+void ApplyIBufBitmapInit(const LogEntry &log, Page *page);
 }

@@ -23,6 +23,13 @@ void Page::WriteCheckSum(uint32_t checksum) {
   mach_write_to_4(data_ + DATA_PAGE_SIZE - FIL_PAGE_END_LSN_OLD_CHKSUM, checksum);
 }
 
+Page::Page(const Page &other) :
+  data_(new unsigned char[DATA_PAGE_SIZE]),
+  state_(other.state_) {
+
+  std::memcpy(data_, other.data_, DATA_PAGE_SIZE);
+}
+
 BufferPool::BufferPool() :
     lru_list_(),
     hash_map_(),
@@ -42,7 +49,7 @@ BufferPool::BufferPool() :
     uint32_t space_id = mach_read_from_4(page_buf + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID);
     ifs.close();
     space_id_2_file_name_.insert({space_id, PageReaderWriter(filename)});
-    std::cout << space_id << "->" << filename << std::endl;
+//    std::cout << space_id << "->" << filename << std::endl;
   }
 
   // 2. 初始化free_list_
@@ -98,11 +105,15 @@ void BufferPool::Evict(int n) {
     if (lru_list_.empty()) return;
     // 把 buffer frame 从 LRU List 中移除
     frame_id_t frame_id = lru_list_.back();
+    space_id_t space_id = frame_id_2_page_address_[frame_id].space_id_;
+    page_id_t page_id = frame_id_2_page_address_[frame_id].page_id_;
+
+    // 写回
+    WriteBack(space_id, page_id);
     lru_list_.pop_back();
     assert(frame_id_2_page_address_[frame_id].in_lru_ == true);
     frame_id_2_page_address_[frame_id].in_lru_ = false;
-    space_id_t space_id = frame_id_2_page_address_[frame_id].space_id_;
-    page_id_t page_id = frame_id_2_page_address_[frame_id].page_id_;
+
     hash_map_[space_id].erase(page_id);
 
     // 把 buffer frame 归还 Free List
@@ -173,7 +184,7 @@ bool BufferPool::WriteBack(space_id_t space_id, page_id_t page_id) {
     return true;
   }
 
-  std::cout << "Page(space_id = " << space_id << ", page_id = " << page_id << ") is not in buffer pool." << std::endl;
+//  std::cout << "Page(space_id = " << space_id << ", page_id = " << page_id << ") is not in buffer pool." << std::endl;
   return false;
 }
 

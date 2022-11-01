@@ -161,4 +161,5 @@ mach_read_from_7(
   return(ut_ull_create(mach_read_from_3(b), mach_read_from_4(b + 3)));
 }
 
+lsn_t recv_calc_lsn_on_data_add(lsn_t lsn, uint64_t len);
 }

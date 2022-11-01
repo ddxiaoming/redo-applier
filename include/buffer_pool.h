@@ -52,6 +52,9 @@ public:
     FROM_DISK = 2, // 从磁盘中读上来的
   };
   Page();
+
+  // Copy Constructor
+  Page(const Page &other);
   ~Page();
   lsn_t GetLSN() const {
     return mach_read_from_8(data_ + FIL_PAGE_LSN);

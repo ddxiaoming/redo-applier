@@ -335,6 +335,7 @@ static constexpr uint32_t FIL_PAGE_RTREE= 17854;	/*!< B-tree node */
 static constexpr uint32_t FIL_PAGE_UNDO_LOG = 2;	/*!< Undo log page */
 static constexpr uint32_t FIL_PAGE_INODE = 3;	/*!< Index node */
 static constexpr uint32_t FIL_PAGE_IBUF_FREE_LIST = 4;	/*!< Insert buffer free list */
+static constexpr uint32_t IBUF_BITS_PER_PAGE = 4;
 /* File page types introduced in MySQL/InnoDB 5.1.7 */
 static constexpr uint32_t FIL_PAGE_TYPE_ALLOCATED = 0;	/*!< Freshly allocated page */
 static constexpr uint32_t FIL_PAGE_IBUF_BITMAP = 5;	/*!< Insert buffer bitmap */
@@ -598,4 +599,9 @@ static constexpr uint32_t REC_2BYTE_EXTERN_MASK = 0x4000UL;
 static constexpr uint32_t BUF_NO_CHECKSUM_MAGIC = 0xDEADBEEFUL;
 
 static constexpr uint32_t FIL_PAGE_SPACE_OR_CHKSUM = 0;
+
+static constexpr uint32_t IBUF_BITMAP = PAGE_DATA;
+
+static constexpr uint32_t OS_FILE_LOG_BLOCK_SIZE = 512;
+
 }

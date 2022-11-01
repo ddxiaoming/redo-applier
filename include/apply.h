@@ -10,7 +10,7 @@ namespace Lemon {
 
 class ApplySystem {
 public:
-  ApplySystem();
+  ApplySystem(bool save_logs);
   ~ApplySystem();
   lsn_t GetCheckpointLSN() const {
     return checkpoint_lsn_;
@@ -24,7 +24,7 @@ public:
   bool PopulateHashMap();
   bool ApplyHashLogs();
 
-  static void ApplyOneLog(Page *page, const LogEntry &log);
+  static bool ApplyOneLog(Page *page, const LogEntry &log);
 
   void SetSaveLogs(bool save) {
     save_logs_ = save;
@@ -38,8 +38,11 @@ private:
   // parse buffer size in bytes
   uint32_t parse_buf_size_;
 
-  // 存放log block中掐头去尾后的redo日志，这些日志必须是完整的MTR
+  // 左半边与右半边组成一个双buffer，防止某一个buffer中的log还没有被apply就被覆盖了
   unsigned char *parse_buf_;
+
+  // 存放log block中掐头去尾后的redo日志，这些日志必须是完整的MTR，指向双buffer中的某一个
+  unsigned char *parse_buf_ptr_;
 
   // parse buffer中有效日志的长度
   uint32_t parse_buf_content_size_;
@@ -80,6 +83,9 @@ private:
 
   std::ofstream table_ofs_; // 分别对每张表保存其log文件
   bool save_logs_;
+
+  // 遇到MLOG_INIT_FILE_PAGE2类型的日志，才可以apply
+  std::unordered_map<space_id_t, std::unordered_map<page_id_t, bool>> can_apply_{};
 };
 
 }

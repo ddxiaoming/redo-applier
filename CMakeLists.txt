@@ -15,3 +15,8 @@ set(SOURCE_FILE
 add_executable(Applier ${SOURCE_FILE})
 target_include_directories(Applier PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(Applier fmt)
+
+add_executable(ReadFifo
+        ${PROJECT_SOURCE_DIR}/src/read_fifo.cpp)
+target_include_directories(ReadFifo PUBLIC ${PROJECT_SOURCE_DIR}/include)
+add_executable(debug debug.cpp)

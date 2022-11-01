@@ -152,7 +152,7 @@ byte* ParseOrApplyNBytes(LOG_TYPE type, const byte* log_body_start_ptr, const by
     case MLOG_4BYTES:
       // 对MLOG_4BYTES类型的日志进行Apply
       if (page) {
-        mach_write_to_2(page + offset, val);
+        mach_write_to_4(page + offset, val);
       }
     default:
       break;
@@ -693,10 +693,6 @@ ParseOrApplySetMinRecMark(byte*	ptr, const byte* end_ptr, bool comp, byte*	page)
   return ptr + 2;
 }
 
-static inline byte*
-page_dir_get_nth_slot(const byte*	page, uint32_t n) {
-  return((byte*)page + DATA_PAGE_SIZE - PAGE_DIR - (n + 1) * PAGE_DIR_SLOT_SIZE);
-}
 
 static inline uint32_t page_header_get_field(
     const byte*	page,	/*!< in: page */
@@ -704,17 +700,24 @@ static inline uint32_t page_header_get_field(
 {
   assert(page);
   assert(field <= PAGE_INDEX_ID);
-  return(mach_read_from_2(page + PAGE_HEADER + field));
+  return mach_read_from_2(page + PAGE_HEADER + field);
 }
 
 static inline uint32_t
 page_dir_get_n_slots(const byte* page) {
   return(page_header_get_field(page, PAGE_N_DIR_SLOTS));
 }
+
+
+static inline byte*
+page_dir_get_nth_slot(const byte*	page, uint32_t n) {
+  assert(page_dir_get_n_slots(page) > n);
+  return((byte*)page + DATA_PAGE_SIZE - PAGE_DIR - (n + 1) * PAGE_DIR_SLOT_SIZE);
+}
 static inline uint32_t
 rec_get_n_owned_new(const byte*	rec) {
-  return(rec_get_bit_field_1(rec, REC_NEW_N_OWNED,
-                             REC_N_OWNED_MASK, REC_N_OWNED_SHIFT));
+  return rec_get_bit_field_1(rec, REC_NEW_N_OWNED,
+                             REC_N_OWNED_MASK, REC_N_OWNED_SHIFT);
 }
 /*************************************************************//**
 Gets the page number.
@@ -737,24 +740,29 @@ page_dir_find_owner_slot(
     const byte *page,
     const byte*	rec)	/*!< in: the physical record */
 {
-  uint16_t 			rec_offs_bytes;
+  uint16_t rec_offs_bytes;
   const byte*	slot;
   const byte*	first_slot;
-  const byte*		r = rec;
+  const byte* r = rec;
   // TODO 可能有问题的地方
   first_slot = page_dir_get_nth_slot(page, 0);
   slot = page_dir_get_nth_slot(page, page_dir_get_n_slots(page) - 1);
 
   while (rec_get_n_owned_new(r) == 0) {
-    r = rec_get_next_ptr_const(r);
+    r = rec_get_next_ptr_const(page, r);
     assert(r >= page + PAGE_NEW_SUPREMUM);
     assert(r < page + (DATA_PAGE_SIZE - PAGE_DIR));
   }
 
   rec_offs_bytes = mach_encode_2(r - page);
 
+  int i = 0;
+//  std::cout << "slots--------------------" << std::endl;
+//  std::ofstream ofs("/home/lemon/mysql/debug_data/slot1.txt", std::ios::out);
   while (*(uint16_t *) slot != rec_offs_bytes) {
 
+//    std::cout << *(uint16_t *) slot << std::endl;
+//    ofs << *(uint16_t *) slot << std::endl;
     if (slot == first_slot) {
       std::cerr << "Probable data corruption on page "
                   << page_get_page_no(page)
@@ -765,14 +773,14 @@ page_dir_find_owner_slot(
                      " record on that page;" << std::endl;
       exit(0);
     }
-
+    ++i;
     slot += PAGE_DIR_SLOT_SIZE;
   }
 
   return(((uint32_t) (first_slot - slot)) / PAGE_DIR_SLOT_SIZE);
 }
 
-static inline void page_header_set_field(byte*	page,	uint32_t field,	uint32_t val) {
+static inline void page_header_set_field(byte* page, uint32_t field, uint32_t val) {
   mach_write_to_2(page + PAGE_HEADER + field, val);
 }
 
@@ -891,6 +899,29 @@ static byte* ParseOrApplyIbufBitmapInit(byte* ptr, const byte* end_ptr,byte*	pag
   return(ptr);
 }
 
+static byte* page_create_low(byte* page) {
+  // 设置page的种类
+  fil_page_set_type(page, FIL_PAGE_INDEX);
+
+  std::memset(page + PAGE_HEADER, 0, PAGE_HEADER_PRIV_END);
+  page[PAGE_HEADER + PAGE_DIRECTION + 1] = PAGE_NO_DIRECTION;
+  page[PAGE_HEADER + PAGE_N_DIR_SLOTS + 1] = 2; // 初始化PAGE_N_DIR_SLOTS属性
+  // // 初始化PAGE_DIRECTION属性
+
+  page[PAGE_HEADER + PAGE_N_HEAP] = 0x80;/*page_is_comp()*/
+  page[PAGE_HEADER + PAGE_N_HEAP + 1] = PAGE_HEAP_NO_USER_LOW;
+  page[PAGE_HEADER + PAGE_HEAP_TOP + 1] = PAGE_NEW_SUPREMUM_END;
+  std::memcpy(page + PAGE_DATA, infimum_supremum_compact,
+              sizeof infimum_supremum_compact);
+  std::memset(page + PAGE_NEW_SUPREMUM_END, 0,
+              DATA_PAGE_SIZE - PAGE_DIR - PAGE_NEW_SUPREMUM_END);
+  page[DATA_PAGE_SIZE - PAGE_DIR - PAGE_DIR_SLOT_SIZE * 2 + 1]
+      = PAGE_NEW_SUPREMUM;
+  page[DATA_PAGE_SIZE - PAGE_DIR - PAGE_DIR_SLOT_SIZE + 1]
+      = PAGE_NEW_INFIMUM;
+  return page;
+}
+
 /**
  * Apply MLOG_COMP_PAGE_CREATE
  */
@@ -899,25 +930,8 @@ void ApplyCompPageCreate(byte* page) {
     return;
   }
 
-  // 设置page的种类
-  fil_page_set_type(page, FIL_PAGE_INDEX);
+  page_create_low(page);
 
-  std::memset(page + PAGE_HEADER, 0, PAGE_HEADER_PRIV_END);
-  page[PAGE_HEADER + PAGE_N_DIR_SLOTS + 1] = 2; // 初始化PAGE_N_DIR_SLOTS属性
-  // // 初始化PAGE_DIRECTION属性
-
-  page[PAGE_HEADER + PAGE_N_HEAP] = 0x80;/*page_is_comp()*/
-  page[PAGE_HEADER + PAGE_N_HEAP + 1] = PAGE_HEAP_NO_USER_LOW;
-  page[PAGE_HEADER + PAGE_HEAP_TOP + 1] = PAGE_NEW_SUPREMUM_END;
-  std::memcpy(page + PAGE_DATA, infimum_supremum_compact,
-         sizeof infimum_supremum_compact);
-  std::memset(page
-         + PAGE_NEW_SUPREMUM_END, 0,
-              DATA_PAGE_SIZE - PAGE_DIR - PAGE_NEW_SUPREMUM_END);
-  page[DATA_PAGE_SIZE - PAGE_DIR - PAGE_DIR_SLOT_SIZE * 2 + 1]
-      = PAGE_NEW_SUPREMUM;
-  page[DATA_PAGE_SIZE - PAGE_DIR - PAGE_DIR_SLOT_SIZE + 1]
-      = PAGE_NEW_INFIMUM;
 }
 
 /**
@@ -942,26 +956,31 @@ void ApplyInitFilePage2(const LogEntry &log, Page *page) {
  * @param rec_info 索引信息，传出参数
  * @return 该返回值之前的log已经被解析，后续应该从该返回值之后继续解析，如果返回值为nullptr，说明这是一个错误的log格式
  */
-static byte* ParseRecInfoFromLog(const byte *ptr, const byte *end_ptr, RecordInfo &rec_info) {
+static byte* ParseRecInfoFromLog(const byte *ptr, const byte *end_ptr, RecordInfo &rec_info, bool comp) {
+  uint32_t n = 0, n_uniq = 0;
+  if (comp) {
+    if (end_ptr < ptr + 4) {
+      return nullptr;
+    }
+    // 解析出要log中有多少field
+    n = mach_read_from_2(ptr);
 
-  if (end_ptr < ptr + 4) {
-    return nullptr;
+    ptr += 2;
+
+    // 解析出要插入的这一个index有多少个unique field
+    n_uniq = mach_read_from_2(ptr);
+
+    ptr += 2;
+
+
+    assert(n_uniq <= n);
+    if (end_ptr < ptr + n * 2) {
+      return nullptr;
+    }
+  } else {
+    n = n_uniq = 1;
   }
-  // 解析出要插入的这一个index有多少field
-  uint32_t n = mach_read_from_2(ptr);
 
-  ptr += 2;
-
-  // 解析出要插入的这一个index有多少个unique field
-  uint32_t n_uniq = mach_read_from_2(ptr);
-
-  ptr += 2;
-
-
-  assert(n_uniq <= n);
-  if (end_ptr < ptr + n * 2) {
-    return nullptr;
-  }
 
   // 初始化index的信息
   rec_info.SetNFields(n);
@@ -971,6 +990,10 @@ static byte* ParseRecInfoFromLog(const byte *ptr, const byte *end_ptr, RecordInf
   if (n_uniq != n) {
     assert(n_uniq + DATA_ROLL_PTR <= n);
     rec_info.SetIndexType(DICT_CLUSTERED);
+  }
+
+  if (!comp) {
+    return const_cast<byte *>(ptr);
   }
 
   for (int i = 0; i < n; i++) {
@@ -1151,7 +1174,7 @@ Gets the pointer to the next record on the page.
 @return pointer to next record */
 static
 byte*
-page_rec_get_next(byte* page, const byte * rec)
+page_rec_get_next(byte* page, const byte* rec)
 {
   uint32_t 		offs;
   // TODO 可能有问题的地方
@@ -1299,7 +1322,7 @@ Splits a directory slot which owns too many records. */
 void
 page_dir_split_slot(
 /*================*/
-    byte*		page,	/*!< in/out: index page */
+    byte* page,	/*!< in/out: index page */
     uint32_t slot_no)/*!< in: the directory slot */
 {
   byte* rec;
@@ -1351,6 +1374,12 @@ page_dir_split_slot(
   page_dir_slot_set_n_owned(page, slot, n_owned - (n_owned / 2));
 }
 
+
+uint32_t page_get_n_recs(const byte *	page)	/*!< in: index page */
+{
+  return(page_header_get_field(page, PAGE_N_RECS));
+}
+
 /***********************************************************//**
 Inserts a record next to page cursor on an uncompressed page.
 Returns pointer to inserted record if succeed, i.e., enough
@@ -1398,7 +1427,7 @@ page_cur_insert_rec_low(
     insert_buf = free_rec - free_rec_info.GetExtraSize();
 
     heap_no = rec_get_heap_no_new(free_rec);
-    page_mem_alloc_free(page, rec_get_next_ptr(free_rec), rec_size);
+    page_mem_alloc_free(page, rec_get_next_ptr(page, free_rec), rec_size);
 
   } else {
     use_heap:
@@ -1420,6 +1449,9 @@ page_cur_insert_rec_low(
     page_rec_set_next(page, insert_rec, next_rec);
     page_rec_set_next(page, pre_rec, insert_rec);
   }
+
+  page_header_set_field(page, PAGE_N_RECS,
+                        1 + page_get_n_recs(page));
 
   /* 5. Set the n_owned field in the inserted record to zero,
 and set the heap_no field */
@@ -1459,7 +1491,7 @@ and set the heap_no field */
     page_header_set_field(page, PAGE_N_DIRECTION, 0);
   }
 
-
+  page_header_set_ptr(page, PAGE_LAST_INSERT, insert_rec);
 
   /* 7. It remains to update the owner record. */
   {
@@ -1473,20 +1505,200 @@ and set the heap_no field */
     we have to split the corresponding directory slot in two. */
 
     if (n_owned == PAGE_DIR_SLOT_MAX_N_OWNED) {
-      page_dir_split_slot(
-          page,
-          page_dir_find_owner_slot(page, owner_rec));
+//      assert(mach_read_from_2(page_dir_get_nth_slot(page, page_dir_get_n_slots(page) - 1) - 2) == 0);
+//      std::cout << "slot_number:" << page_dir_find_owner_slot(page, owner_rec) << std::endl;
+      page_dir_split_slot(page, page_dir_find_owner_slot(page, owner_rec));
     }
   }
 
   return insert_rec;
 }
+static byte *page_get_supremum_rec(byte *page) {
+  return page + PAGE_NEW_SUPREMUM;
+}
 
+/************************************************************//**
+Gets the pointer to the next record on the page.
+@return pointer to next record */
+static
+const byte*
+page_rec_get_next_low(const byte* page, const byte*	rec) {
+  uint32_t offs;
+
+  offs = rec_get_next_offs(page, rec);
+
+  if (offs >= DATA_PAGE_SIZE) {
+    // Error
+    std::cerr << "Next record offset is nonsensical" << std::endl;
+    exit(1);
+  } else if (offs == 0) {
+
+    return(nullptr);
+  }
+
+  return(page + offs);
+}
+
+
+/************************************************************//**
+Gets the pointer to the previous record.
+@return pointer to previous record */
+static
+const byte*
+page_rec_get_prev_const(const byte* page, const byte*	rec)
+{
+  const byte*	slot;
+  uint32_t 			slot_no;
+  const byte*		rec2;
+  const byte*		prev_rec = nullptr;
+
+  slot_no = page_dir_find_owner_slot(page, rec);
+
+  assert(slot_no != 0);
+
+  slot = page_dir_get_nth_slot(page, slot_no - 1);
+
+  rec2 = page_dir_slot_get_rec(page, slot);
+
+  while (rec != rec2) {
+    prev_rec = rec2;
+    rec2 = page_rec_get_next_low(page, rec2);
+  }
+
+  assert(prev_rec);
+
+  return(prev_rec);
+}
+
+
+/************************************************************//**
+Gets the pointer to the previous record.
+@return pointer to previous record */
+static byte* page_rec_get_prev(const byte *page, byte* rec) {
+return((byte*) page_rec_get_prev_const(page, rec));
+}
+/***********************************************************//**
+Parses a log record of a record insert on a page.
+@return end of log record or NULL */
+static byte*
+page_cur_parse_insert_rec(
+    bool is_short,
+    const byte*	ptr,	/*!< in: buffer */
+    const byte*	end_ptr,/*!< in: buffer end */
+    Page*	page,	/*!< in: page or NULL */
+    RecordInfo	&rec_info) {
+  uint32_t origin_offset = 0;
+  uint32_t mismatch_index = 0;
+  uint32_t offset = 0;
+  byte*	cursor_rec;
+  byte	buf1[1024];
+  byte*	buf;
+  uint32_t info_and_status_bits = 0;
+
+  if (is_short) {
+    cursor_rec = page_rec_get_prev(page->GetData(), page_get_supremum_rec(page->GetData()));
+  } else {
+    /* Read the cursor rec offset as a 2-byte ulint */
+
+    assert(end_ptr >= ptr + 2);
+
+    // 解析出上一条记录的页内偏移量
+    offset = mach_read_from_2(ptr);
+    ptr += 2;
+
+    // log文件损坏
+    assert(offset < DATA_PAGE_SIZE);
+    cursor_rec = page->GetData() + offset; // 上一条记录的位置
+  }
+
+
+  // 解析出end_seg_len属性
+  uint32_t end_seg_len = mach_parse_compressed(&ptr, end_ptr);
+  assert(ptr != nullptr);
+
+  if (end_seg_len >= DATA_PAGE_SIZE << 1) {
+    // 到这说明这条log损坏了
+    return nullptr;
+  }
+
+  if (end_seg_len & 0x1UL) {
+    /* Read the info bits */
+
+    if (end_ptr < ptr + 1) {
+      return nullptr;
+    }
+
+    // 解析出info_and_status_bits
+    info_and_status_bits = mach_read_from_1(ptr);
+    ptr++;
+
+    // 解析出origin_offset
+    origin_offset = mach_parse_compressed(&ptr, end_ptr);
+
+    if (ptr == nullptr) {
+      return nullptr;
+    }
+
+    assert(origin_offset < DATA_PAGE_SIZE);
+
+    // 解析出mismatch_index
+    mismatch_index = mach_parse_compressed(&ptr, end_ptr);
+
+    if (ptr == nullptr) {
+      return nullptr;
+    }
+
+    assert(mismatch_index < DATA_PAGE_SIZE);
+  }
+
+  if (end_ptr < ptr + (end_seg_len >> 1)) {
+    return nullptr;
+  }
+
+  /* Read from the log the inserted index record end segment which
+  differs from the cursor record */
+
+  RecordInfo pre_rec_info = rec_info; // 上一条记录
+  pre_rec_info.SetRecPtr(cursor_rec);
+  pre_rec_info.CalculateOffsets(ULINT_UNDEFINED);
+
+  if (!(end_seg_len & 0x1UL)) {
+    info_and_status_bits = rec_get_info_and_status_bits(cursor_rec);
+    origin_offset = pre_rec_info.GetExtraSize();
+    mismatch_index = pre_rec_info.GetDataSize() + pre_rec_info.GetExtraSize() - (end_seg_len >> 1);
+  }
+
+  end_seg_len >>= 1;
+
+  if (mismatch_index + end_seg_len < sizeof buf1) {
+    buf = buf1;
+  } else {
+    buf = static_cast<byte*>(malloc(mismatch_index + end_seg_len));
+  }
+
+  /* Build the inserted record to buf */
+  std::memcpy(buf, cursor_rec - pre_rec_info.GetExtraSize(), mismatch_index);
+  std::memcpy(buf + mismatch_index, ptr, end_seg_len);
+
+  rec_set_info_and_status_bits(buf + origin_offset,
+                               info_and_status_bits);
+
+  rec_info.SetRecPtr(buf + origin_offset);
+  rec_info.CalculateOffsets(ULINT_UNDEFINED);
+
+  // 插入记录
+  page_cur_insert_rec_low(page->GetData(), pre_rec_info, cursor_rec, rec_info, rec_info.GetRecPtr());
+
+  if (buf != buf1) {
+    free(buf);
+  }
+  return(const_cast<byte*>(ptr + end_seg_len));
+}
 void ApplyCompRecInsert(const LogEntry &log, Page *page) {
   RecordInfo inserted_rec_info;
   const byte *ptr = log.log_body_start_ptr_;
   const byte *end_ptr = log.log_body_end_ptr_;
-  ptr = ParseRecInfoFromLog(ptr, end_ptr, inserted_rec_info);
+  ptr = ParseRecInfoFromLog(ptr, end_ptr, inserted_rec_info, true);
 
   uint32_t origin_offset = 0;
   uint32_t mismatch_index = 0;
@@ -1702,7 +1914,7 @@ void ApplyCompRecClusterDeleteMark(const LogEntry &log, Page *page) {
   RecordInfo deleted_rec_info;
   const byte *ptr = log.log_body_start_ptr_;
   const byte *end_ptr = log.log_body_end_ptr_;
-  ptr = ParseRecInfoFromLog(ptr, end_ptr, deleted_rec_info);
+  ptr = ParseRecInfoFromLog(ptr, end_ptr, deleted_rec_info, true);
 
   uint32_t flags;
   uint32_t		val;
@@ -1746,7 +1958,6 @@ void ApplyCompRecClusterDeleteMark(const LogEntry &log, Page *page) {
   and the adaptive hash index does not depend on them. */
 
   uint32_t deleted_flag = rec_get_deleted_flag(rec);
-  std::cout << "before apply, delete mark is " << deleted_flag << std::endl;
   btr_rec_set_deleted_flag(rec, val);
 
   if (!(flags & BTR_KEEP_SYS_FLAG)) {
@@ -1755,17 +1966,230 @@ void ApplyCompRecClusterDeleteMark(const LogEntry &log, Page *page) {
     deleted_rec_info.CalculateOffsets(ULINT_UNDEFINED);
     row_upd_rec_sys_fields_in_recovery(rec, deleted_rec_info, pos, trx_id, roll_ptr);
   }
-  deleted_flag = rec_get_deleted_flag(rec);
-  std::cout << "after apply, delete mark is " << deleted_flag << std::endl;
 }
 
+void ApplyRecSecondDeleteMark(const LogEntry &log, Page *page) {
+  const byte *ptr = log.log_body_start_ptr_;
+  const byte *end_ptr = log.log_body_end_ptr_;
+  uint32_t val;
+  uint32_t	offset;
+  byte*	rec;
+  if (end_ptr < ptr + 3) {
+    return;
+  }
+
+  val = mach_read_from_1(ptr);
+  ptr++;
+
+  offset = mach_read_from_2(ptr);
+  ptr += 2;
+
+  assert(offset <= DATA_PAGE_SIZE);
+
+  rec = page->GetData() + offset;
+
+  btr_rec_set_deleted_flag(rec, val);
+}
+
+
+/**********************************************************//**
+Moves the cursor to the next record on page. */
+static byte*
+page_cur_move_to_next(byte *page, byte*	rec) {
+  return page_rec_get_next(page, rec);
+}
+/**************************************************************//**
+Used to delete n slots from the directory. This function updates
+also n_owned fields in the records, so that the first slot after
+the deleted ones inherits the records of the deleted slots. */
+static void
+page_dir_delete_slot(byte* page, uint32_t slot_no) {
+  assert(slot_no > 0);
+
+  uint32_t n_slots = page_dir_get_n_slots(page);
+
+  assert(slot_no + 1 < n_slots);
+
+  /* 1. Reset the n_owned fields of the slots to be
+  deleted */
+  byte *slot = page_dir_get_nth_slot(page, slot_no);
+  uint32_t n_owned = page_dir_slot_get_n_owned(page, slot);
+  page_dir_slot_set_n_owned(page, slot, 0);
+
+  /* 2. Update the n_owned value of the first non-deleted slot */
+
+  slot = page_dir_get_nth_slot(page, slot_no + 1);
+  page_dir_slot_set_n_owned(page, slot,
+                            n_owned + page_dir_slot_get_n_owned(page, slot));
+
+  /* 3. Destroy the slot by copying slots */
+  for (uint32_t i = slot_no + 1; i < n_slots; i++) {
+    byte* rec = const_cast<byte*>(page_dir_slot_get_rec(page, page_dir_get_nth_slot(page, i)));
+    page_dir_slot_set_rec(page, page_dir_get_nth_slot(page, i - 1), rec);
+  }
+
+  /* 4. Zero out the last slot, which will be removed */
+  mach_write_to_2(page_dir_get_nth_slot(page, n_slots - 1), 0);
+
+  /* 5. Update the page header */
+  page_header_set_field(page, PAGE_N_DIR_SLOTS, n_slots - 1);
+}
+
+/*************************************************************//**
+Tries to balance the given directory slot with too few records with the upper
+neighbor, so that there are at least the minimum number of records owned by
+the slot; this may result in the merging of two slots. */
+static void page_dir_balance_slot(byte* page, uint32_t slot_no) {
+  assert(page);
+  assert(slot_no > 0);
+
+  byte *slot = page_dir_get_nth_slot(page, slot_no);
+
+  /* The last directory slot cannot be balanced with the upper
+  neighbor, as there is none. */
+
+  if (slot_no == page_dir_get_n_slots(page) - 1) {
+    return;
+  }
+
+  byte *up_slot = page_dir_get_nth_slot(page, slot_no + 1);
+
+  uint32_t n_owned = page_dir_slot_get_n_owned(page, slot);
+  uint32_t up_n_owned = page_dir_slot_get_n_owned(page, up_slot);
+
+  assert(n_owned == PAGE_DIR_SLOT_MIN_N_OWNED - 1);
+
+  /* If the upper slot has the minimum value of n_owned, we will merge
+  the two slots, therefore we assert: */
+  assert(2 * PAGE_DIR_SLOT_MIN_N_OWNED - 1 <= PAGE_DIR_SLOT_MAX_N_OWNED);
+
+  if (up_n_owned > PAGE_DIR_SLOT_MIN_N_OWNED) {
+
+    /* In this case we can just transfer one record owned
+    by the upper slot to the property of the lower slot */
+    byte *old_rec = const_cast<byte *>(page_dir_slot_get_rec(page, slot));
+
+    byte *new_rec = rec_get_next_ptr(page, old_rec);
+
+    rec_set_n_owned_new(old_rec, 0);
+    rec_set_n_owned_new(new_rec, n_owned + 1);
+
+    page_dir_slot_set_rec(page, slot, new_rec);
+
+    page_dir_slot_set_n_owned(page, up_slot, up_n_owned -1);
+  } else {
+    /* In this case we may merge the two slots */
+    page_dir_delete_slot(page, slot_no);
+  }
+}
+
+/************************************************************//**
+Puts a record to free list. */
+static
+void
+page_mem_free(
+/*==========*/
+    byte*			page,		/*!< in/out: index page */
+    byte*			rec,		/*!< in: pointer to the record */
+    const RecordInfo	&index	/*!< in: index of rec */)
+{
+  byte*		free;
+  uint32_t garbage;
+
+  free = page_header_get_ptr(page, PAGE_FREE);
+
+  page_rec_set_next(page, rec, free);
+  page_header_set_ptr(page, PAGE_FREE, rec);
+
+  garbage = page_header_get_field(page, PAGE_GARBAGE);
+
+  page_header_set_field(page, PAGE_GARBAGE,
+                        garbage + index.GetExtraSize() + index.GetDataSize());
+
+  page_header_set_field(page, PAGE_N_RECS, page_get_n_recs(page) - 1);
+}
+
+
+/***********************************************************//**
+Deletes a record at the page rec_ptr. The rec_ptr is moved to the next
+record after the deleted one. */
+static byte*
+page_cur_delete_rec(byte *page, byte* rec_ptr, const RecordInfo &deleted_rec_info)
+{
+  byte *prev_rec	= nullptr;
+  byte *current_rec = rec_ptr;
+
+  /* Save to local variables some data associated with current_rec */
+  uint32_t cur_slot_no = page_dir_find_owner_slot(page, current_rec);
+  assert(cur_slot_no > 0);
+  byte *cur_dir_slot = page_dir_get_nth_slot(page, cur_slot_no);
+  uint32_t cur_n_owned = page_dir_slot_get_n_owned(page, cur_dir_slot);
+
+  /* 1. Reset the last insert info in the page header and increment
+  the modify clock for the frame */
+
+  page_header_set_ptr(page, PAGE_LAST_INSERT, nullptr);
+
+  /* The page gets invalid for optimistic searches: increment the
+  frame modify clock only if there is an mini-transaction covering
+  the change. During IMPORT we allocate local blocks that are not
+  part of the buffer pool. */
+
+  /* 2. Find the next and the previous record. Note that the rec_ptr is
+  left at the next record. */
+  byte *prev_slot = page_dir_get_nth_slot(page, cur_slot_no - 1);
+
+  byte *rec = const_cast<byte*>(page_dir_slot_get_rec(page, prev_slot));
+
+  /* rec now points to the record of the previous directory slot. Look
+  for the immediate predecessor of current_rec in a loop. */
+
+  while (current_rec != rec) {
+    prev_rec = rec;
+    rec = page_rec_get_next(page, rec);
+  }
+
+  byte *next_rec = page_cur_move_to_next(page, current_rec);
+  rec_ptr = next_rec;
+  /* 3. Remove the record from the linked list of records */
+
+  page_rec_set_next(page, prev_rec, next_rec);
+
+  /* 4. If the deleted record is pointed to by a dir slot, update the
+  record pointer in slot. In the following if-clause we assume that
+  prev_rec is owned by the same slot, i.e., PAGE_DIR_SLOT_MIN_N_OWNED
+  >= 2. */
+  assert(cur_n_owned > 1);
+
+  if (current_rec == page_dir_slot_get_rec(page, cur_dir_slot)) {
+    page_dir_slot_set_rec(page, cur_dir_slot, prev_rec);
+  }
+
+  /* 5. Update the number of owned records of the slot */
+
+  page_dir_slot_set_n_owned(page, cur_dir_slot, cur_n_owned - 1);
+
+  /* 6. Free the memory occupied by the record */
+  page_mem_free(page, current_rec, deleted_rec_info);
+
+
+  /* 7. Now we have decremented the number of owned records of the slot.
+  If the number drops below PAGE_DIR_SLOT_MIN_N_OWNED, we balance the
+  slots. */
+
+  if (cur_n_owned <= PAGE_DIR_SLOT_MIN_N_OWNED) {
+    page_dir_balance_slot(page, cur_slot_no);
+  }
+
+  return rec_ptr;
+}
 /***********************************************************//**
 Replaces the new column values stored in the update vector to the
 record given. No field size changes are allowed. This function is
 usually invoked on a clustered rec_info. The only use case for a
 secondary rec_info is row_ins_sec_index_entry_by_modify() or its
 counterpart in ibuf_insert_to_index_page(). */
-void
+static void
 row_upd_rec_in_place(
 /*=================*/
     byte*		rec,	/*!< in/out: record where replaced */
@@ -1794,7 +2218,7 @@ void ApplyCompRecUpdateInPlace(const LogEntry &log, Page *page) {
   RecordInfo update_rec_info;
   const byte *ptr = log.log_body_start_ptr_;
   const byte *end_ptr = log.log_body_end_ptr_;
-  ptr = ParseRecInfoFromLog(ptr, end_ptr, update_rec_info);
+  ptr = ParseRecInfoFromLog(ptr, end_ptr, update_rec_info, true);
 
   uint32_t flags;
   byte*	rec;
@@ -1857,7 +2281,7 @@ void ApplyCompRecSecondDeleteMark(const LogEntry &log, Page *page) {
   RecordInfo deleted_rec_info;
   const byte *ptr = log.log_body_start_ptr_;
   const byte *end_ptr = log.log_body_end_ptr_;
-  ptr = ParseRecInfoFromLog(ptr, end_ptr, deleted_rec_info);
+  ptr = ParseRecInfoFromLog(ptr, end_ptr, deleted_rec_info, true);
   uint32_t val;
   uint32_t	offset;
   byte*	rec;
@@ -1877,6 +2301,526 @@ void ApplyCompRecSecondDeleteMark(const LogEntry &log, Page *page) {
 
   btr_rec_set_deleted_flag(rec, val);
 }
+
+
+// Apply MLOG_COMP_REC_DELETE
+void ApplyCompRecDelete(const LogEntry &log, Page *page) {
+  RecordInfo deleted_rec_info;
+  const byte *ptr = log.log_body_start_ptr_;
+  const byte *end_ptr = log.log_body_end_ptr_;
+  ptr = ParseRecInfoFromLog(ptr, end_ptr, deleted_rec_info, true);
+  uint32_t offset;
+
+  if (end_ptr < ptr + 2) {
+    return;
+  }
+
+  offset = mach_read_from_2(ptr);
+  ptr += 2;
+
+  assert(offset <= DATA_PAGE_SIZE);
+  // 即将要被delete掉的那条rec
+  byte* deleted_rec = page->GetData() + offset;
+
+  deleted_rec_info.SetRecPtr(deleted_rec);
+  deleted_rec_info.CalculateOffsets(ULINT_UNDEFINED);
+
+  page_cur_delete_rec(page->GetData(), deleted_rec, deleted_rec_info);
+}
+
+/************************************************************//**
+Returns the sum of the sizes of the records in the record list, excluding
+the infimum and supremum records.
+@return data in bytes */
+static inline uint32_t page_get_data_size(const byte*	page) {
+  uint32_t ret;
+
+  ret = (uint32_t)(page_header_get_field(page, PAGE_HEAP_TOP)
+                - PAGE_NEW_SUPREMUM_END
+                - page_header_get_field(page, PAGE_GARBAGE));
+
+  assert(ret < DATA_PAGE_SIZE);
+
+  return(ret);
+}
+/************************************************************//**
+Returns the maximum combined size of records which can be inserted on top
+of the record heap if a page is first reorganized.
+@return maximum combined size for inserted records */
+static inline
+uint32_t
+page_get_max_insert_size_after_reorganize(
+/*======================================*/
+    const byte*	page,	/*!< in: index page */
+    uint32_t n_recs)	/*!< in: number of records */
+{
+  uint32_t	occupied;
+  uint32_t	free_space;
+
+  occupied = page_get_data_size(page)
+             + page_dir_calc_reserved_space(n_recs + page_get_n_recs(page));
+
+  free_space = page_get_free_space_of_empty();
+
+  if (occupied > free_space) {
+
+    return 0;
+  }
+
+  return free_space - occupied;
+}
+/***************************************************************//**
+Returns the number of records before the given record in chain.
+The number includes infimum and supremum records.
+@return number of records */
+static inline uint32_t
+page_rec_get_n_recs_before(const byte *page, const byte* rec) {
+  const byte* slot;
+  const byte* slot_rec;
+  int32_t n	= 0;
+
+  while (rec_get_n_owned_new(rec) == 0) {
+
+    rec = rec_get_next_ptr_const(page, rec);
+    n--;
+  }
+
+  for (int i = 0; ; i++) {
+    slot = page_dir_get_nth_slot(page, i);
+    slot_rec = page_dir_slot_get_rec(page, slot);
+
+    n += static_cast<int32_t>(rec_get_n_owned_new(slot_rec));
+
+    if (rec == slot_rec) {
+
+      break;
+    }
+  }
+
+  n--;
+
+  assert(n >= 0);
+  assert((uint32_t) n < DATA_PAGE_SIZE / (REC_N_NEW_EXTRA_BYTES + 1));
+
+  return static_cast<uint32_t>(n);
+}
+
+
+/*********************************************************//**
+Returns TRUE if the cursor is before first user record on page.
+@return TRUE if at start */
+static inline
+bool
+page_cur_is_before_first(const byte* page, const byte *rec) {
+  assert(page);
+  assert(rec);
+  return (rec - page) == PAGE_NEW_INFIMUM;
+}
+
+/*********************************************************//**
+Returns TRUE if the cursor is after last user record.
+@return TRUE if at end */
+static inline bool
+page_cur_is_after_last(const byte *page, const byte* rec)	{
+  assert(page);
+  assert(rec);
+  return rec - page == PAGE_NEW_SUPREMUM;
+}
+
+/*************************************************************//**
+Differs from page_copy_rec_list_end, because this function does not
+touch the lock table and max trx id on page or compress the page.
+
+IMPORTANT: The caller will have to update IBUF_BITMAP_FREE
+if new_block is a compressed leaf page in a secondary index.
+This has to be done either within the same mini-transaction,
+or by invoking ibuf_reset_free_bits() before mtr_commit(). */
+static void
+page_copy_rec_list_end_no_locks(
+/*============================*/
+    byte*	to_page,	/*!< in: index page to copy to */
+    byte*	from_page,		/*!< index page to copy from */
+    byte*	from_rec,	/*!< in: record on from_page */
+    const RecordInfo &index) {
+
+
+  if (page_cur_is_before_first(from_page, from_rec)) {
+
+    from_rec = page_cur_move_to_next(from_page, from_rec);
+  }
+
+  assert(mach_read_from_2(to_page + DATA_PAGE_SIZE - 10) == PAGE_NEW_INFIMUM);
+
+  byte *to_rec = to_page + PAGE_NEW_INFIMUM;
+
+  /* Copy records from the original page to the new page */
+
+  while (!page_cur_is_after_last(from_page, from_rec)) {
+    byte*	ins_rec;
+    RecordInfo insert_rec_info(index);
+    RecordInfo pre_rec_info(index);
+    insert_rec_info.SetRecPtr(from_rec);
+    pre_rec_info.SetRecPtr(to_rec);
+    insert_rec_info.CalculateOffsets(ULINT_UNDEFINED);
+    pre_rec_info.CalculateOffsets(ULINT_UNDEFINED);
+    ins_rec = page_cur_insert_rec_low(to_page,
+                                      pre_rec_info,
+                                      to_rec,
+                                      insert_rec_info,
+                                      from_rec);
+    if (!ins_rec) {
+      std::cerr << "page_copy_rec_list_end_no_locks error" << std::endl;
+      exit(1);
+    }
+
+    from_rec = page_cur_move_to_next(from_page, from_rec);
+    to_rec = ins_rec;
+  }
+}
+
+/*************************************************************//**
+Returns the max trx id field value. */
+static inline trx_id_t page_get_max_trx_id(const byte*	page){
+  assert(page);
+  return(mach_read_from_8(page + PAGE_HEADER + PAGE_MAX_TRX_ID));
+}
+
+/*************************************************************//**
+Sets the max trx id field value. */
+static void page_set_max_trx_id(byte* page, trx_id_t trx_id) {
+  mach_write_to_8(page + (PAGE_HEADER + PAGE_MAX_TRX_ID), trx_id);
+}
+
+/************************************************************//**
+Determine whether the page is a B-tree leaf.
+@return true if the page is a B-tree leaf (PAGE_LEVEL = 0) */
+inline bool page_is_leaf(const byte*	page)	/*!< in: page */
+{
+  return(!*(const uint16_t*) (page + (PAGE_HEADER + PAGE_LEVEL)));
+}
+
+
+void ApplyCompPageReorganize(const LogEntry &log, Page *page) {
+  RecordInfo rec_info;
+  const byte *ptr = log.log_body_start_ptr_;
+  const byte *end_ptr = log.log_body_end_ptr_;
+  ptr = ParseRecInfoFromLog(ptr, end_ptr, rec_info, true);
+
+  // 拿到infimum记录的地址
+  byte *page_ptr = page->GetData();
+  byte *infimum_rec = page_ptr + PAGE_NEW_INFIMUM;
+
+  uint32_t data_size1 = page_get_data_size(page_ptr);
+  uint32_t max_ins_size1 = page_get_max_insert_size_after_reorganize(page_ptr, 1);
+
+  // Copy old page to a temporary space
+  Page *temp_page = new Page(*page);
+
+  byte *temp_page_ptr = temp_page->GetData();
+  /* Recreate the page: note that global data on page (possible
+	segment headers, next page-field, etc.) is preserved intact */
+  page_create_low(page_ptr);
+
+  /* Copy the records from the temporary space to the recreated page; */
+  page_copy_rec_list_end_no_locks(page_ptr, temp_page_ptr, temp_page_ptr + PAGE_NEW_INFIMUM, rec_info);
+
+  if (page_is_leaf(page_ptr)) {
+    /* Copy max trx id to recreated page */
+    trx_id_t max_trx_id = page_get_max_trx_id(temp_page_ptr);
+    page_set_max_trx_id(page_ptr, max_trx_id);
+    assert(max_trx_id != 0);
+  }
+
+
+  uint32_t data_size2 = page_get_data_size(page_ptr);
+  uint32_t max_ins_size2 = page_get_max_insert_size_after_reorganize(page_ptr, 1);
+
+  if (data_size1 != data_size2 || max_ins_size1 != max_ins_size2) {
+    std::cerr
+        << "Error, Page old data size " << data_size1
+        << " new data size " << data_size2
+        << ", page old max ins size " << max_ins_size1
+        << " new max ins size " << max_ins_size2;
+
+    exit(1);
+  }
+  // success
+}
+
+/********************************************************************//**
+Check whether the index is a secondary index or the insert buffer tree.
+@return nonzero for insert buffer, zero for other indexes */
+static inline uint32_t
+dict_index_is_sec_or_ibuf(
+/*======================*/
+    const RecordInfo&	index)	/*!< in: index */
+{
+  uint32_t type;
+
+  type = index.Type();
+
+  return(!(type & DICT_CLUSTERED) || (type & DICT_IBUF));
+}
+
+
+/*************************************************************//**
+Deletes records from a page from a given record onward, including that record.
+The infimum and supremum records are not deleted. */
+static void
+page_delete_rec_list_end(
+/*=====================*/
+    byte* rec,	/*!< in: pointer to record on page */
+    byte*	page,	/*!< in: buffer block of the page */
+    const RecordInfo&	index,	/*!< in: record descriptor */
+    uint32_t n_recs,	/*!< in: number of records to delete,
+				or ULINT_UNDEFINED if not known */
+    uint32_t size	/*!< in: the sum of the sizes of the
+				records in the end of the chain to
+				delete, or ULINT_UNDEFINED if not known */) {
+  byte* slot;
+  uint32_t slot_index;
+  byte* last_rec;
+  byte* prev_rec;
+  uint32_t n_owned;
+
+
+  assert(size == ULINT_UNDEFINED || size < DATA_PAGE_SIZE);
+
+  if (rec - page == PAGE_NEW_SUPREMUM) {
+    assert(n_recs == 0 || n_recs == ULINT_UNDEFINED);
+    /* Nothing to do, there are no records bigger than the
+    page supremum. */
+    return;
+  }
+
+  /* Reset the last insert info in the page header and increment
+  the modify clock for the frame */
+
+  page_header_set_ptr(page, PAGE_LAST_INSERT, nullptr);
+
+  /* The page gets invalid for optimistic searches: increment the
+  frame modify clock */
+
+  prev_rec = page_rec_get_prev(page, rec);
+
+  last_rec = page_rec_get_prev(page, page + PAGE_NEW_SUPREMUM);
+
+  if ((size == ULINT_UNDEFINED) || (n_recs == ULINT_UNDEFINED)) {
+    byte* rec2 = rec;
+    /* Calculate the sum of sizes and the number of records */
+    size = 0;
+    n_recs = 0;
+
+    do {
+      uint32_t s;
+      RecordInfo rec_info(index);
+      rec_info.SetRecPtr(rec2);
+      rec_info.CalculateOffsets(ULINT_UNDEFINED);
+      uint32_t data_size = rec_info.GetDataSize();
+      uint32_t extra_size = rec_info.GetExtraSize();
+      s = data_size + extra_size;
+      assert(rec2 - page + s - extra_size
+            < DATA_PAGE_SIZE);
+      assert(size + s < DATA_PAGE_SIZE);
+      size += s;
+      n_recs++;
+
+      rec2 = page_rec_get_next(page, rec2);
+    } while (rec2 - page != PAGE_NEW_SUPREMUM);
+  }
+
+  assert(size < DATA_PAGE_SIZE);
+
+  /* Update the page directory; there is no need to balance the number
+  of the records owned by the supremum record, as it is allowed to be
+  less than PAGE_DIR_SLOT_MIN_N_OWNED */
+
+  byte*	rec2 = rec;
+  uint32_t count = 0;
+
+  while (rec_get_n_owned_new(rec2) == 0) {
+    count++;
+
+    rec2 = rec_get_next_ptr(page, rec2);
+  }
+
+  assert(rec_get_n_owned_new(rec2) > count);
+
+  n_owned = rec_get_n_owned_new(rec2) - count;
+  slot_index = page_dir_find_owner_slot(page, rec2);
+  assert(slot_index > 0);
+  slot = page_dir_get_nth_slot(page, slot_index);
+
+  page_dir_slot_set_rec(page, slot, page_get_supremum_rec(page));
+  page_dir_slot_set_n_owned(page, slot, n_owned);
+
+  page_dir_set_n_slots(page, slot_index + 1);
+
+  /* Remove the record chain segment from the record chain */
+  page_rec_set_next(page, prev_rec, page_get_supremum_rec(page));
+
+  /* Catenate the deleted chain segment to the page free list */
+
+  page_rec_set_next(page, last_rec, page_header_get_ptr(page, PAGE_FREE));
+  page_header_set_ptr(page, PAGE_FREE, rec);
+
+  page_header_set_field(page, PAGE_GARBAGE, size + page_header_get_field(page, PAGE_GARBAGE));
+
+  page_header_set_field(page, PAGE_N_RECS,
+                        (uint32_t)(page_get_n_recs(page) - n_recs));
+}
+
+/*************************************************************//**
+Sets the max trx id field value if trx_id is bigger than the previous
+value. */
+static inline
+void
+page_update_max_trx_id(byte* page, trx_id_t trx_id) {
+  assert(page);
+  assert(trx_id);
+  assert(page_is_leaf(page));
+
+  if (page_get_max_trx_id(page) < trx_id) {
+
+    page_set_max_trx_id(page, trx_id);
+  }
+}
+
+
+/**********************************************************//**
+Empty a previously created B-tree index page. */
+static void page_create_empty(
+/*==============*/
+    byte*	page,	/*!< in/out: B-tree block */
+    const RecordInfo&	index	/*!< in: the index of the page */
+    )
+{
+  trx_id_t	max_trx_id = 0;
+  if (page_is_leaf(page)) {
+    max_trx_id = page_get_max_trx_id(page);
+    assert(max_trx_id);
+  }
+
+  page_create_low(page);
+
+  if (max_trx_id) {
+    page_update_max_trx_id(page, max_trx_id);
+  }
+}
+
+
+/*************************************************************//**
+Deletes records from page, up to the given record, NOT including
+that record. Infimum and supremum records are not deleted. */
+void
+page_delete_rec_list_start(
+/*=======================*/
+    byte* rec,	/*!< in: record on page */
+    byte*	page,	/*!< in: buffer block of the page */
+    const RecordInfo&	index	/*!< in: record descriptor */
+    )
+{
+  if (rec - page == PAGE_NEW_INFIMUM) {
+    return;
+  }
+
+  if (rec - page == PAGE_NEW_SUPREMUM) {
+    /* We are deleting all records. */
+    page_create_empty(page, index);
+    return;
+  }
+
+  byte *delete_rec = page + PAGE_NEW_INFIMUM;
+  delete_rec = page_cur_move_to_next(page, delete_rec);
+
+  /* Individual deletes are not logged */
+
+  while (delete_rec != rec) {
+    RecordInfo rec_info(index);
+    // TODO 优化，不需要每次都拷贝构造
+    rec_info.SetRecPtr(delete_rec);
+    rec_info.CalculateOffsets(ULINT_UNDEFINED);
+    delete_rec = page_cur_delete_rec(page, delete_rec, rec_info);
+  }
+}
+
+
+void ApplyCompListDelete(const LogEntry &log, Page *page) {
+  RecordInfo rec_info;
+  const byte *ptr = log.log_body_start_ptr_;
+  const byte *end_ptr = log.log_body_end_ptr_;
+  ptr = ParseRecInfoFromLog(ptr, end_ptr, rec_info, true);
+
+  if (end_ptr < ptr + 2) {
+
+    return;
+  }
+
+  byte *page_ptr = page->GetData();
+
+  uint32_t offset = mach_read_from_2(ptr);
+  ptr += 2;
+
+  if (log.type_ == MLOG_COMP_LIST_END_DELETE) {
+    page_delete_rec_list_end(page_ptr + offset, page_ptr, rec_info,
+                             ULINT_UNDEFINED, ULINT_UNDEFINED);
+  } else {
+    page_delete_rec_list_start(page_ptr + offset, page_ptr, rec_info);
+  }
+}
+
+
+void ApplyIBufBitmapInit(const LogEntry &log, Page *page) {
+  byte *ptr = log.log_body_start_ptr_;
+  byte *end_ptr = log.log_body_end_ptr_;
+
+  fil_page_set_type(page->GetData(), FIL_PAGE_IBUF_BITMAP);
+
+  /* Write all zeros to the bitmap */
+
+  uint32_t byte_offset = ((DATA_PAGE_SIZE * IBUF_BITS_PER_PAGE) + 7) / 8;
+
+  std::memset(page->GetData() + IBUF_BITMAP, 0, byte_offset);
+}
+
+
+void ApplyCompListEndCopyCreated(const LogEntry &log, Page *page) {
+  RecordInfo rec_info;
+  byte *ptr = log.log_body_start_ptr_;
+  const byte *end_ptr = log.log_body_end_ptr_;
+  ptr = ParseRecInfoFromLog(ptr, end_ptr, rec_info, true);
+  byte* rec_end;
+  uint32_t log_data_len;
+
+  if (ptr + 4 > end_ptr) {
+
+    return;
+  }
+
+  log_data_len = mach_read_from_4(ptr);
+  ptr += 4;
+
+  rec_end = ptr + log_data_len;
+
+  if (rec_end > end_ptr) {
+    return;
+  }
+
+
+  while (ptr < rec_end) {
+    ptr = page_cur_parse_insert_rec(true, ptr, end_ptr, page, rec_info);
+  }
+
+  assert(ptr == rec_end);
+
+  page_header_set_ptr(page->GetData(), PAGE_LAST_INSERT, nullptr);
+
+  page_header_set_field(page->GetData(), PAGE_DIRECTION,
+                        PAGE_NO_DIRECTION);
+  page_header_set_field(page->GetData(), PAGE_N_DIRECTION, 0);
+
+}
+
 
 byte* ParseOrApplyString(byte* log_body_start_ptr, const byte* log_body_end_ptr, byte* page) {
   uint32_t offset;

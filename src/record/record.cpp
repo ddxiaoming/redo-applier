@@ -1,6 +1,7 @@
 #include "record.h"
 #include <cassert>
 #include <cstring>
+#include <string>
 #include <iostream>
 #include "utility.h"
 namespace Lemon {
@@ -149,9 +150,7 @@ The following function is used to get the pointer of the next chained record
 on the same page.
 @return pointer to the next chained record, or NULL if none */
 const byte*
-rec_get_next_ptr_const(
-/*===================*/
-    const byte*	rec)	/*!< in: physical record */
+rec_get_next_ptr_const(const byte *page, const byte* rec)	/*!< in: physical record */
 
 {
   uint32_t 	field_value;
@@ -164,7 +163,7 @@ rec_get_next_ptr_const(
   }
 
   // TODO 可能有问题的地方
-  return rec + field_value;
+  return page + ((rec - page + field_value) % DATA_PAGE_SIZE);
 }
 
 /******************************************************//**
@@ -174,9 +173,10 @@ on the same page.
 byte*
 rec_get_next_ptr(
 /*=============*/
+    const byte *page,
     byte*	rec) /*!< in: physical record */
 {
-return(const_cast<byte*>(rec_get_next_ptr_const(rec)));
+return(const_cast<byte*>(rec_get_next_ptr_const(page, rec)));
 }
 
 byte*
@@ -204,7 +204,7 @@ uint32_t rec_get_next_offs(const byte* page, const byte *rec) {
     return(0);
   }
   // TODO 可能有问题的地方
-  return (rec + field_value - page);
+  return (rec + field_value - page) % DATA_PAGE_SIZE;
 }
 
 /******************************************************//**
@@ -227,10 +227,9 @@ rec_set_next_offs_new(
   } else {
 
     // TODO 可能有问题的地方
-    field_value = next;
-//    field_value = (uint32_t)
-//        ((int32_t) next
-//         - (int32_t) (rec - page));
+    field_value = (uint32_t)
+        ((int32_t) next
+         - (int32_t) (rec - page));
     field_value &= REC_NEXT_MASK;
   }
 
@@ -613,7 +612,7 @@ rec_set_nth_field(
   }
 
   data2 = rec_get_nth_field(rec, rec_info, n, &len2);
-  std::cout << data2 << std::endl;
+
   if (len2 == UNIV_SQL_NULL) {
     rec_set_nth_field_null_bit(rec, n, false);
     assert(len == rec_get_nth_field_size(rec, n));
@@ -622,13 +621,11 @@ rec_set_nth_field(
   }
 
   std::memcpy(data2, data, len);
-  data2 = rec_get_nth_field(rec, rec_info, n, &len2);
-  std::cout << data2 << std::endl;
 }
 
 
 uint32_t rec_get_deleted_flag(const byte*	rec) {
-  rec_get_bit_field_1(rec, REC_NEW_INFO_BITS,
+  return rec_get_bit_field_1(rec, REC_NEW_INFO_BITS,
                       REC_INFO_DELETED_FLAG,
                       REC_INFO_BITS_SHIFT);
 }
