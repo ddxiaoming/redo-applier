@@ -3,11 +3,13 @@
 #include "config.h"
 #include "buffer_pool.h"
 #include "bean.h"
+#include "timer.h"
 #include "record.h"
 #include <cassert>
 #include <cstring>
 #include <iostream>
-
+#include <chrono>
+unsigned long long parse_body_time = 0;
 namespace Lemon {
 
 /**
@@ -802,9 +804,7 @@ static const byte* page_dir_slot_get_rec(const byte *page, const byte *slot) {
 
 
 
-static byte* ParseOrApplyDeleteRec(byte*	ptr,
-                            const byte* end_ptr,
-                            byte*	page) {
+static byte* ParseDeleteRec(byte*	ptr, const byte* end_ptr, byte*	page) {
   if (end_ptr < ptr + 2) {
     return nullptr;
   }
@@ -813,89 +813,10 @@ static byte* ParseOrApplyDeleteRec(byte*	ptr,
   ptr += 2;
   assert(offset <= DATA_PAGE_SIZE);
 
-  // 先不管apply
-//  if (page) {
-//
-//    uint32_t offsets_[100];
-//    byte *rec	= page + offset;
-//    std::memset(offsets_, 0, 100);
-//    offsets_[0] = 100;
-//
-//    byte* cur_dir_slot;
-//    byte* prev_slot;
-//    byte* prev_rec = nullptr;
-//    byte*	next_rec = nullptr;
-//    uint32_t cur_slot_no;
-//    uint32_t cur_n_owned;
-//
-//    byte *current_rec = rec;
-//
-//
-//    /* Save to local variables some data associated with current_rec */
-//    cur_slot_no = page_dir_find_owner_slot(page, current_rec);
-//    assert(cur_slot_no > 0);
-//    cur_dir_slot = page_dir_get_nth_slot(page, cur_slot_no);
-//
-//    cur_n_owned = rec_get_n_owned_new(current_rec);
-//
-//    page_header_set_ptr(page, PAGE_LAST_INSERT, NULL);
-//
-//    prev_slot = page_dir_get_nth_slot(page, cur_slot_no - 1);
-//
-//    rec = (byte*) page_dir_slot_get_rec(page, prev_slot);
-//
-//    /* rec now points to the record of the previous directory slot. Look
-//    for the immediate predecessor of current_rec in a loop. */
-//
-//    while (current_rec != rec) {
-//      prev_rec = rec;
-//      rec = const_cast<byte *>(page_rec_get_next(page, rec));
-//    }
-//
-//    page_cur_move_to_next(cursor);
-//    next_rec = cursor->rec;
-//
-//    /* 3. Remove the record from the linked list of records */
-//
-//    page_rec_set_next(prev_rec, next_rec);
-//
-//    /* 4. If the deleted record is pointed to by a dir slot, update the
-//    record pointer in slot. In the following if-clause we assume that
-//    prev_rec is owned by the same slot, i.e., PAGE_DIR_SLOT_MIN_N_OWNED
-//    >= 2. */
-//
-//
-//    ut_ad(cur_n_owned > 1);
-//
-//    if (current_rec == page_dir_slot_get_rec(cur_dir_slot)) {
-//      page_dir_slot_set_rec(cur_dir_slot, prev_rec);
-//    }
-//
-//    /* 5. Update the number of owned records of the slot */
-//
-//    page_dir_slot_set_n_owned(cur_dir_slot, page_zip, cur_n_owned - 1);
-//
-//    /* 6. Free the memory occupied by the record */
-//    page_mem_free(page, page_zip, current_rec, index, offsets);
-//
-//    /* 7. Now we have decremented the number of owned records of the slot.
-//    If the number drops below PAGE_DIR_SLOT_MIN_N_OWNED, we balance the
-//    slots. */
-//
-//    if (cur_n_owned <= PAGE_DIR_SLOT_MIN_N_OWNED) {
-//      page_dir_balance_slot(page, page_zip, cur_slot_no);
-//    }
-//  }
-
   return(ptr);
 }
 
-static byte* ParseOrApplyIbufBitmapInit(byte* ptr, const byte* end_ptr,byte*	page) {
-  if (page) {
-    //暂时先不恢复
-//    ibuf_bitmap_page_init(block, mtr);
-  }
-
+static inline byte* ParseIbufBitmapInit(byte* ptr, const byte* end_ptr, byte* page) {
   return(ptr);
 }
 
@@ -925,21 +846,21 @@ static byte* page_create_low(byte* page) {
 /**
  * Apply MLOG_COMP_PAGE_CREATE
  */
-void ApplyCompPageCreate(byte* page) {
+byte* ApplyCompPageCreate(byte* page) {
   if (page == nullptr) {
-    return;
+    return nullptr;
   }
 
-  page_create_low(page);
+  return page_create_low(page);
 
 }
 
 /**
  * Apply MLOG_INIT_FILE_PAGE2
  */
-void ApplyInitFilePage2(const LogEntry &log, Page *page) {
-  if (page == nullptr) {
-    return;
+bool ApplyInitFilePage2(const LogEntry &log, Page *page) {
+  if (page == nullptr || page->GetData()) {
+    return false;
   }
   byte *page_data = page->GetData();
   std::memset(page_data, 0, DATA_PAGE_SIZE);
@@ -947,6 +868,8 @@ void ApplyInitFilePage2(const LogEntry &log, Page *page) {
   mach_write_to_4(page_data + FIL_PAGE_OFFSET, log.page_id_);
   // 写入space id
   mach_write_to_4(page_data + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID, log.space_id_);
+
+  return true;
 }
 
 /**
@@ -1694,12 +1617,15 @@ page_cur_parse_insert_rec(
   }
   return(const_cast<byte*>(ptr + end_seg_len));
 }
-void ApplyCompRecInsert(const LogEntry &log, Page *page) {
+bool ApplyCompRecInsert(const LogEntry &log, Page *page) {
   RecordInfo inserted_rec_info;
   const byte *ptr = log.log_body_start_ptr_;
   const byte *end_ptr = log.log_body_end_ptr_;
   ptr = ParseRecInfoFromLog(ptr, end_ptr, inserted_rec_info, true);
 
+  if (ptr == nullptr) {
+    return false;
+  }
   uint32_t origin_offset = 0;
   uint32_t mismatch_index = 0;
   byte*	cursor_rec;
@@ -1724,14 +1650,14 @@ void ApplyCompRecInsert(const LogEntry &log, Page *page) {
 
   if (end_seg_len >= DATA_PAGE_SIZE << 1) {
     // 到这说明这条log损坏了
-    return;
+    return false;
   }
 
   if (end_seg_len & 0x1UL) {
     /* Read the info bits */
 
     if (end_ptr < ptr + 1) {
-      return;
+      return false;
     }
 
     // 解析出info_and_status_bits
@@ -1742,7 +1668,7 @@ void ApplyCompRecInsert(const LogEntry &log, Page *page) {
     origin_offset = mach_parse_compressed(&ptr, end_ptr);
 
     if (ptr == nullptr) {
-      return;
+      return false;
     }
 
     assert(origin_offset < DATA_PAGE_SIZE);
@@ -1751,14 +1677,14 @@ void ApplyCompRecInsert(const LogEntry &log, Page *page) {
     mismatch_index = mach_parse_compressed(&ptr, end_ptr);
 
     if (ptr == nullptr) {
-      return;
+      return false;
     }
 
     assert(mismatch_index < DATA_PAGE_SIZE);
   }
 
   if (end_ptr < ptr + (end_seg_len >> 1)) {
-    return;
+    return false;
   }
 
   /* Read from the log the inserted index record end segment which
@@ -1798,6 +1724,8 @@ void ApplyCompRecInsert(const LogEntry &log, Page *page) {
   if (buf != buf1) {
     free(buf);
   }
+
+  return true;
 }
 
 /*****************************************************************//**
@@ -1910,12 +1838,15 @@ row_upd_rec_sys_fields_in_recovery(
   trx_write_roll_ptr(field + DATA_TRX_ID_LEN, roll_ptr);
 }
 
-void ApplyCompRecClusterDeleteMark(const LogEntry &log, Page *page) {
+bool ApplyCompRecClusterDeleteMark(const LogEntry &log, Page *page) {
   RecordInfo deleted_rec_info;
   const byte *ptr = log.log_body_start_ptr_;
   const byte *end_ptr = log.log_body_end_ptr_;
   ptr = ParseRecInfoFromLog(ptr, end_ptr, deleted_rec_info, true);
 
+  if (ptr == nullptr) {
+    return false;
+  }
   uint32_t flags;
   uint32_t		val;
   uint32_t		pos;
@@ -1925,7 +1856,7 @@ void ApplyCompRecClusterDeleteMark(const LogEntry &log, Page *page) {
   byte *rec;
 
   if (end_ptr < ptr + 2) {
-    return;
+    return false;
   }
 
   flags = mach_read_from_1(ptr);
@@ -1937,12 +1868,12 @@ void ApplyCompRecClusterDeleteMark(const LogEntry &log, Page *page) {
 
   if (ptr == nullptr) {
 
-    return;
+    return false;
   }
 
   if (end_ptr < ptr + 2) {
 
-    return;
+    return false;
   }
 
   offset = mach_read_from_2(ptr);
@@ -1966,16 +1897,18 @@ void ApplyCompRecClusterDeleteMark(const LogEntry &log, Page *page) {
     deleted_rec_info.CalculateOffsets(ULINT_UNDEFINED);
     row_upd_rec_sys_fields_in_recovery(rec, deleted_rec_info, pos, trx_id, roll_ptr);
   }
+
+  return true;
 }
 
-void ApplyRecSecondDeleteMark(const LogEntry &log, Page *page) {
+bool ApplyRecSecondDeleteMark(const LogEntry &log, Page *page) {
   const byte *ptr = log.log_body_start_ptr_;
   const byte *end_ptr = log.log_body_end_ptr_;
   uint32_t val;
   uint32_t	offset;
   byte*	rec;
   if (end_ptr < ptr + 3) {
-    return;
+    return false;
   }
 
   val = mach_read_from_1(ptr);
@@ -1989,6 +1922,8 @@ void ApplyRecSecondDeleteMark(const LogEntry &log, Page *page) {
   rec = page->GetData() + offset;
 
   btr_rec_set_deleted_flag(rec, val);
+
+  return true;
 }
 
 
@@ -2214,11 +2149,15 @@ row_upd_rec_in_place(
                       update.fields_[i].len_);
   }
 }
-void ApplyCompRecUpdateInPlace(const LogEntry &log, Page *page) {
+bool ApplyCompRecUpdateInPlace(const LogEntry &log, Page *page) {
   RecordInfo update_rec_info;
   const byte *ptr = log.log_body_start_ptr_;
   const byte *end_ptr = log.log_body_end_ptr_;
   ptr = ParseRecInfoFromLog(ptr, end_ptr, update_rec_info, true);
+
+  if (ptr == nullptr) {
+    return false;
+  }
 
   uint32_t flags;
   byte*	rec;
@@ -2230,7 +2169,7 @@ void ApplyCompRecUpdateInPlace(const LogEntry &log, Page *page) {
 
   if (end_ptr < ptr + 1) {
 
-    return;
+    return false;
   }
 
   flags = mach_read_from_1(ptr);
@@ -2240,12 +2179,12 @@ void ApplyCompRecUpdateInPlace(const LogEntry &log, Page *page) {
 
   if (ptr == nullptr) {
 
-    return;
+    return false;
   }
 
   if (end_ptr < ptr + 2) {
 
-    return;
+    return false;
   }
 
   // 解析出需要更新的记录的偏移量
@@ -2259,7 +2198,7 @@ void ApplyCompRecUpdateInPlace(const LogEntry &log, Page *page) {
 
   if (!ptr || !page->GetData()) {
 
-    return;
+    return false;
   }
 
   // 解析出要更新的record的地址
@@ -2275,18 +2214,22 @@ void ApplyCompRecUpdateInPlace(const LogEntry &log, Page *page) {
   // update
   row_upd_rec_in_place(rec, update_rec_info, update);
 
+  return true;
 }
 // Apply MLOG_COMP_REC_SEC_DELETE_MARK log.
-void ApplyCompRecSecondDeleteMark(const LogEntry &log, Page *page) {
+bool ApplyCompRecSecondDeleteMark(const LogEntry &log, Page *page) {
   RecordInfo deleted_rec_info;
   const byte *ptr = log.log_body_start_ptr_;
   const byte *end_ptr = log.log_body_end_ptr_;
   ptr = ParseRecInfoFromLog(ptr, end_ptr, deleted_rec_info, true);
+  if (ptr == nullptr) {
+    return false;
+  }
   uint32_t val;
   uint32_t	offset;
   byte*	rec;
   if (end_ptr < ptr + 3) {
-    return;
+    return false;
   }
 
   val = mach_read_from_1(ptr);
@@ -2300,19 +2243,25 @@ void ApplyCompRecSecondDeleteMark(const LogEntry &log, Page *page) {
   rec = page->GetData() + offset;
 
   btr_rec_set_deleted_flag(rec, val);
+
+  return true;
 }
 
 
 // Apply MLOG_COMP_REC_DELETE
-void ApplyCompRecDelete(const LogEntry &log, Page *page) {
+bool ApplyCompRecDelete(const LogEntry &log, Page *page) {
   RecordInfo deleted_rec_info;
   const byte *ptr = log.log_body_start_ptr_;
   const byte *end_ptr = log.log_body_end_ptr_;
   ptr = ParseRecInfoFromLog(ptr, end_ptr, deleted_rec_info, true);
   uint32_t offset;
 
+  if (ptr == nullptr) {
+    return false;
+  }
+
   if (end_ptr < ptr + 2) {
-    return;
+    return false;
   }
 
   offset = mach_read_from_2(ptr);
@@ -2326,6 +2275,7 @@ void ApplyCompRecDelete(const LogEntry &log, Page *page) {
   deleted_rec_info.CalculateOffsets(ULINT_UNDEFINED);
 
   page_cur_delete_rec(page->GetData(), deleted_rec, deleted_rec_info);
+  return true;
 }
 
 /************************************************************//**
@@ -2500,11 +2450,15 @@ inline bool page_is_leaf(const byte*	page)	/*!< in: page */
 }
 
 
-void ApplyCompPageReorganize(const LogEntry &log, Page *page) {
+bool ApplyCompPageReorganize(const LogEntry &log, Page *page) {
   RecordInfo rec_info;
   const byte *ptr = log.log_body_start_ptr_;
   const byte *end_ptr = log.log_body_end_ptr_;
   ptr = ParseRecInfoFromLog(ptr, end_ptr, rec_info, true);
+
+  if (ptr == nullptr) {
+    return false;
+  }
 
   // 拿到infimum记录的地址
   byte *page_ptr = page->GetData();
@@ -2545,6 +2499,7 @@ void ApplyCompPageReorganize(const LogEntry &log, Page *page) {
     exit(1);
   }
   // success
+  return true;
 }
 
 /********************************************************************//**
@@ -2613,6 +2568,7 @@ page_delete_rec_list_end(
 
     do {
       uint32_t s;
+      // TODO 不需要每次都拷贝构造
       RecordInfo rec_info(index);
       rec_info.SetRecPtr(rec2);
       rec_info.CalculateOffsets(ULINT_UNDEFINED);
@@ -2736,8 +2692,8 @@ page_delete_rec_list_start(
   /* Individual deletes are not logged */
 
   while (delete_rec != rec) {
-    RecordInfo rec_info(index);
     // TODO 优化，不需要每次都拷贝构造
+    RecordInfo rec_info(index);
     rec_info.SetRecPtr(delete_rec);
     rec_info.CalculateOffsets(ULINT_UNDEFINED);
     delete_rec = page_cur_delete_rec(page, delete_rec, rec_info);
@@ -2745,15 +2701,19 @@ page_delete_rec_list_start(
 }
 
 
-void ApplyCompListDelete(const LogEntry &log, Page *page) {
+bool ApplyCompListDelete(const LogEntry &log, Page *page) {
   RecordInfo rec_info;
   const byte *ptr = log.log_body_start_ptr_;
   const byte *end_ptr = log.log_body_end_ptr_;
   ptr = ParseRecInfoFromLog(ptr, end_ptr, rec_info, true);
 
+  if (ptr == nullptr) {
+    return false;
+  }
+
   if (end_ptr < ptr + 2) {
 
-    return;
+    return false;
   }
 
   byte *page_ptr = page->GetData();
@@ -2767,10 +2727,12 @@ void ApplyCompListDelete(const LogEntry &log, Page *page) {
   } else {
     page_delete_rec_list_start(page_ptr + offset, page_ptr, rec_info);
   }
+
+  return true;
 }
 
 
-void ApplyIBufBitmapInit(const LogEntry &log, Page *page) {
+bool ApplyIBufBitmapInit(const LogEntry &log, Page *page) {
   byte *ptr = log.log_body_start_ptr_;
   byte *end_ptr = log.log_body_end_ptr_;
 
@@ -2781,20 +2743,27 @@ void ApplyIBufBitmapInit(const LogEntry &log, Page *page) {
   uint32_t byte_offset = ((DATA_PAGE_SIZE * IBUF_BITS_PER_PAGE) + 7) / 8;
 
   std::memset(page->GetData() + IBUF_BITMAP, 0, byte_offset);
+
+  return true;
 }
 
 
-void ApplyCompListEndCopyCreated(const LogEntry &log, Page *page) {
+bool ApplyCompListEndCopyCreated(const LogEntry &log, Page *page) {
   RecordInfo rec_info;
   byte *ptr = log.log_body_start_ptr_;
   const byte *end_ptr = log.log_body_end_ptr_;
   ptr = ParseRecInfoFromLog(ptr, end_ptr, rec_info, true);
+
+  if (ptr == nullptr) {
+    return false;
+  }
+
   byte* rec_end;
   uint32_t log_data_len;
 
   if (ptr + 4 > end_ptr) {
 
-    return;
+    return false;
   }
 
   log_data_len = mach_read_from_4(ptr);
@@ -2803,7 +2772,7 @@ void ApplyCompListEndCopyCreated(const LogEntry &log, Page *page) {
   rec_end = ptr + log_data_len;
 
   if (rec_end > end_ptr) {
-    return;
+    return false;
   }
 
 
@@ -2819,6 +2788,7 @@ void ApplyCompListEndCopyCreated(const LogEntry &log, Page *page) {
                         PAGE_NO_DIRECTION);
   page_header_set_field(page->GetData(), PAGE_N_DIRECTION, 0);
 
+  return true;
 }
 
 
@@ -2979,12 +2949,12 @@ static byte* ParseSingleLogRecordBody(LOG_TYPE	type,
       if (nullptr != (ptr = mlog_parse_index(ptr, end_ptr,
                                              type == MLOG_COMP_REC_DELETE))) {
 
-        ptr = ParseOrApplyDeleteRec(ptr, end_ptr,nullptr);
+        ptr = ParseDeleteRec(ptr, end_ptr, nullptr);
       }
       break;
     case MLOG_IBUF_BITMAP_INIT:
       /* Allow anything in page_type when creating a page. */
-      ptr = ParseOrApplyIbufBitmapInit(ptr, end_ptr, nullptr);
+      ptr = ParseIbufBitmapInit(ptr, end_ptr, nullptr);
       break;
     case MLOG_INIT_FILE_PAGE:
     case MLOG_INIT_FILE_PAGE2:
@@ -3014,6 +2984,7 @@ uint32_t ParseSingleLogRecord(LOG_TYPE &type,
                      space_id_t &space_id,
                      page_id_t &page_id,
                      byte** body) {
+  Timer t;
   const byte*	new_ptr = ptr;
   *body = nullptr;
   if (new_ptr >= end_ptr) {
@@ -3048,6 +3019,7 @@ uint32_t ParseSingleLogRecord(LOG_TYPE &type,
     return 0;
   }
 
+
   space_id = mach_parse_compressed(&new_ptr, end_ptr);
 
   if (new_ptr != nullptr) {
@@ -3058,6 +3030,7 @@ uint32_t ParseSingleLogRecord(LOG_TYPE &type,
   }
   *body = const_cast<byte *>(new_ptr);
   // 4. 解析log body
+
   new_ptr = ParseSingleLogRecordBody(type, const_cast<byte *>(new_ptr), end_ptr, space_id, page_id);
 
   if (new_ptr == nullptr) return 0;

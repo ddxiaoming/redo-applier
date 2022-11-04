@@ -8,6 +8,7 @@ namespace Lemon {
 
 uint32_t
 rec_get_bit_field_1(const byte*	rec, uint32_t offs, uint32_t mask, uint32_t shift) {
+  assert(rec);
   return((mach_read_from_1(rec - offs) & mask) >> shift);
 }
 
@@ -15,7 +16,7 @@ bool rec_info_bits_valid(uint32_t bits) {
   return(0 == (bits & ~(REC_INFO_DELETED_FLAG | REC_INFO_MIN_REC_FLAG)));
 }
 
-void rec_set_bit_field_1(byte*	rec, uint32_t	val, uint32_t	offs, uint32_t mask, uint32_t shift) {
+void rec_set_bit_field_1(byte* rec, uint32_t val, uint32_t offs, uint32_t mask, uint32_t shift) {
   mach_write_to_1(rec - offs,
                   (mach_read_from_1(rec - offs) & ~mask)
                   | (val << shift));

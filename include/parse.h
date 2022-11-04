@@ -2,7 +2,7 @@
 #include "config.h"
 #include "bean.h"
 #include "buffer_pool.h"
-
+extern unsigned long long parse_body_time;
 namespace Lemon {
 
 /** Tries to parse a single log record.
@@ -47,31 +47,31 @@ byte* ParseOrApplyString(byte* log_body_start_ptr, const byte* log_body_end_ptr,
  * Apply MLOG_COMP_PAGE_CREATE log.
  * @param page The page you want to apply.
  */
-void ApplyCompPageCreate(byte* page);
+byte* ApplyCompPageCreate(byte* page);
 
 /**
  * Apply MLOG_INIT_FILE_PAGE2 log.
  * @param log
  * @param page
  */
-void ApplyInitFilePage2(const LogEntry &log, Page *page);
+bool ApplyInitFilePage2(const LogEntry &log, Page *page);
 
 /**
  * Apply MLOG_COMP_REC_INSERT log.
  * @param log
  * @param page
  */
-void ApplyCompRecInsert(const LogEntry &log, Page *page);
+bool ApplyCompRecInsert(const LogEntry &log, Page *page);
 
 /**
  * Apply MLOG_COMP_REC_CLUST_DELETE_MARK
  * @param log
  * @param page
  */
-void ApplyCompRecClusterDeleteMark(const LogEntry &log, Page *page);
+bool ApplyCompRecClusterDeleteMark(const LogEntry &log, Page *page);
 
 
-void ApplyRecSecondDeleteMark(const LogEntry &log, Page *page);
+bool ApplyRecSecondDeleteMark(const LogEntry &log, Page *page);
 
 
 /**
@@ -79,18 +79,18 @@ void ApplyRecSecondDeleteMark(const LogEntry &log, Page *page);
  * @param log
  * @param page
  */
-void ApplyCompRecUpdateInPlace(const LogEntry &log, Page *page);
+bool ApplyCompRecUpdateInPlace(const LogEntry &log, Page *page);
 
 
-void ApplyCompRecSecondDeleteMark(const LogEntry &log, Page *page);
+bool ApplyCompRecSecondDeleteMark(const LogEntry &log, Page *page);
 
-void ApplyCompRecDelete(const LogEntry &log, Page *page);
+bool ApplyCompRecDelete(const LogEntry &log, Page *page);
 
-void ApplyCompListEndCopyCreated(const LogEntry &log, Page *page);
+bool ApplyCompListEndCopyCreated(const LogEntry &log, Page *page);
 
-void ApplyCompPageReorganize(const LogEntry &log, Page *page);
+bool ApplyCompPageReorganize(const LogEntry &log, Page *page);
 
-void ApplyCompListDelete(const LogEntry &log, Page *page);
+bool ApplyCompListDelete(const LogEntry &log, Page *page);
 
-void ApplyIBufBitmapInit(const LogEntry &log, Page *page);
+bool ApplyIBufBitmapInit(const LogEntry &log, Page *page);
 }

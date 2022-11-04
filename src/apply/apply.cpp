@@ -4,12 +4,20 @@
 #include "apply.h"
 #include "utility.h"
 #include "buffer_pool.h"
+#include "chrono"
 #include "parse.h"
 namespace Lemon {
 static int logs_applied = 0;
+static unsigned long long read_file_time_in_parse = 0; // nano seconds
+static unsigned long long read_file_time_in_apply = 0; // nano seconds
+static unsigned long long apply_time = 0; // nano seconds
+static unsigned long long parse_time = 0; // nano seconds
+static unsigned long long total_time = 0; // nano seconds
+static unsigned long long apply_file_len = 0; // bytes
+static unsigned long long parse_file_len = 0; // bytes
 ApplySystem::ApplySystem(bool save_logs) :
     hash_map_(),
-    parse_buf_size_(2 * 1024 * 1024), // 2M
+    parse_buf_size_(10 * 1024 * 1024), // 10M
     parse_buf_(new unsigned char[parse_buf_size_ * 2]),
     parse_buf_ptr_(parse_buf_),
     parse_buf_content_size_(0),
@@ -60,23 +68,30 @@ ApplySystem::~ApplySystem() {
 
 bool ApplySystem::PopulateHashMap() {
 
+  auto t1 = std::chrono::steady_clock::now();
+
   if (next_fetch_page_id_ > log_max_page_id_) {
     std::cerr << "we have processed all redo log."
               << std::endl;
     return false;
   }
+
   unsigned char buf[DATA_PAGE_SIZE];
 
   if (!save_logs_) {
     hash_map_.clear();
   }
+
   // 1.填充parse buffer
   uint32_t end_page_id = next_fetch_page_id_ + (parse_buf_size_ - parse_buf_content_size_) / DATA_PAGE_SIZE;
   for (; next_fetch_page_id_ < end_page_id; ++next_fetch_page_id_) {
 //    std::cout << "next_fetch_page_id_:" << next_fetch_page_id_ << std::endl;
+    auto t2 = std::chrono::steady_clock::now();
     log_stream_.seekg(static_cast<std::streamoff>(next_fetch_page_id_ * DATA_PAGE_SIZE));
     // 读一个Page放到buf里面去
     log_stream_.read(reinterpret_cast<char *>(buf), DATA_PAGE_SIZE);
+    auto t3 = std::chrono::steady_clock::now();
+    read_file_time_in_parse += (t3 - t2).count();
 
     for (int block = 0; block < static_cast<int>((DATA_PAGE_SIZE / LOG_BLOCK_SIZE)); ++block) {
 //      std::cout << "block:" << block << std::endl;
@@ -88,11 +103,19 @@ bool ApplySystem::PopulateHashMap() {
       auto checksum = mach_read_from_4(buf + block * LOG_BLOCK_SIZE + LOG_BLOCK_CHECKSUM);
       // 这个block还没装满，不断轮询这个page的这个block，直到它被装满
       if (data_len != 512) {
-//        std::cout << "waiting for (page_id = "
-//                  << next_fetch_page_id_ << ", block = "
-//                  << block << ") be filled." << std::endl;
+        std::cout << "waiting for (page_id = "
+                  << next_fetch_page_id_ << ", block = "
+                  << block << ") be filled." << std::endl;
+        std::cout << "logs_applied: " << logs_applied << std::endl;
+        std::cout << "read_file_time_in_parse: " << read_file_time_in_parse << std::endl;
+        std::cout << "read_file_time_in_apply: " << read_file_time_in_apply << std::endl;
+        std::cout << "parse_time: " << parse_time << std::endl;
+        std::cout << "parse_body_time: " << parse_body_time << std::endl;
+        std::cout << "apply_time: " << apply_time << std::endl;
+        std::cout << "total_time: " << total_time << std::endl;
+        std::cout << "parse_file_len: " << parse_file_len << std::endl;
+        std::cout << "apply_file_len: " << apply_file_len << std::endl;
         exit(0);
-//        std::cout << logs_applied << std::endl;
         SaveLogs();
         unsigned char tmp_buf[DATA_PAGE_SIZE];
         while (data_len != 512) {
@@ -126,7 +149,10 @@ bool ApplySystem::PopulateHashMap() {
     uint32_t len = 0, space_id, page_id;
     LOG_TYPE	type;
     byte *log_body_ptr = nullptr;
+    auto t4 = std::chrono::steady_clock::now();
     len = ParseSingleLogRecord(type, start_ptr, end_ptr, space_id, page_id, &log_body_ptr);
+    auto t5 = std::chrono::steady_clock::now();
+    parse_time += (t5 - t4).count();
     if (len == 0) {
       break;
     }
@@ -134,6 +160,7 @@ bool ApplySystem::PopulateHashMap() {
     hash_map_[space_id][page_id].emplace_back(type, space_id, page_id,
                                               next_lsn_, len, log_body_ptr,
                                               start_ptr + len);
+
 
     if (save_logs_) {
       summary_ofs_ << "lsn = " << next_lsn_ << ", type = " << GetLogString(type)
@@ -143,6 +170,7 @@ bool ApplySystem::PopulateHashMap() {
 
 
     start_ptr += len;
+    parse_file_len += len;
     next_lsn_ = recv_calc_lsn_on_data_add(next_lsn_, len);
   }
 
@@ -152,10 +180,14 @@ bool ApplySystem::PopulateHashMap() {
   // 双buffer切换
   parse_buf_ptr_ = parse_buf_ + (parse_buf_ptr_ - parse_buf_ + parse_buf_size_) % (parse_buf_size_ * 2);
   std::memcpy(parse_buf_ptr_, start_ptr, parse_buf_content_size_);
+
+  auto t4 = std::chrono::steady_clock::now();
+  total_time += (t4 - t1).count();
+  parse_time += (t4 - t1).count();
   return true;
 }
-
 bool ApplySystem::ApplyHashLogs() {
+  auto t1 = std::chrono::steady_clock::now();
   if (hash_map_.empty()) return false;
   for (const auto &spaces_logs: hash_map_) {
 
@@ -169,12 +201,15 @@ bool ApplySystem::ApplyHashLogs() {
 
       auto page_id = pages_logs.first;
 
-//      if (!(space_id == 28 && page_id == 31)) {
+//      if (!(space_id == 40 && page_id == 36)) {
 //        continue;
 //      }
 
       // 获取需要的page
+      auto t2 = std::chrono::steady_clock::now();
       Page *page = buffer_pool.GetPage(space_id, page_id);
+      auto t3 = std::chrono::steady_clock::now();
+      read_file_time_in_apply += (t3 - t2).count();
 
       if (page == nullptr) continue;
 
@@ -183,9 +218,9 @@ bool ApplySystem::ApplyHashLogs() {
 
       for (const auto &log: pages_logs.second) {
         lsn_t log_lsn = log.log_start_lsn_;
-        if (log_lsn == 27836299) {
-          int x = 0;
-        }
+//        if (log_lsn == 101831414) {
+//          int x = 0;
+//        }
 //        if (log.type_ == MLOG_INIT_FILE_PAGE2) {
 //          can_apply_[space_id][page_id] = true;
 //        } else if (log.type_ == MLOG_COMP_REC_DELETE) {
@@ -202,9 +237,9 @@ bool ApplySystem::ApplyHashLogs() {
 //        if (!can_apply_[space_id][page_id]) {
 //          continue;
 //        }
-//        if (log_lsn <= checkpoint_lsn_) {
-//          continue;
-//        }
+        if (log_lsn <= checkpoint_lsn_) {
+          continue;
+        }
         // skip!
         if (page_lsn > log_lsn) {
 //          std::cout << "This page(space_id = " << space_id << ", page_id = "
@@ -212,14 +247,19 @@ bool ApplySystem::ApplyHashLogs() {
           continue;
         }
 
-        if (log.type_ == MLOG_MULTI_REC_END) {
-          continue;
-        }
+//        if (log.type_ == MLOG_MULTI_REC_END) {
+//          continue;
+//        }
 //        std::cout << "Appling log(lsn = " << log_lsn <<  ", type = " << GetLogString(log.type_) << ", space_id = "
 //                  << log.space_id_ << ", page_id = " << log.page_id_ <<") to page." << std::endl;
+        auto t4 = std::chrono::steady_clock::now();
+
         if (ApplyOneLog(page, log)) {
+          apply_file_len += log.log_len_;
           page->WritePageLSN(log_lsn + log.log_len_);
           page->WriteCheckSum(BUF_NO_CHECKSUM_MAGIC);
+          auto t5 = std::chrono::steady_clock::now();
+          apply_time += (t5 - t4).count();
 //          static std::ofstream ofs("/home/lemon/mysql/debug_data/redo_applier_debug", std::ios::binary | std::ios::out);
 //          ofs.write((const char *) page->GetData(), DATA_PAGE_SIZE);
 //          int fd = open("/home/lemon/fifo_redo_applier", O_WRONLY);
@@ -254,57 +294,49 @@ bool ApplySystem::ApplyHashLogs() {
       }
     }
   }
+  auto t6 = std::chrono::steady_clock::now();
+  total_time += (t6 - t1).count();
   return true;
 }
 
 bool ApplySystem::ApplyOneLog(Page *page, const LogEntry &log) {
+  byte *ret;
   switch (log.type_) {
     case MLOG_1BYTE:
     case MLOG_2BYTES:
     case MLOG_4BYTES:
     case MLOG_8BYTES:
-      ParseOrApplyNBytes(log.type_, log.log_body_start_ptr_, log.log_body_end_ptr_, page->GetData());
-      break;
+      ret = ParseOrApplyNBytes(log.type_, log.log_body_start_ptr_, log.log_body_end_ptr_, page->GetData());
+      return ret != nullptr;
     case MLOG_WRITE_STRING:
-      ParseOrApplyString(log.log_body_start_ptr_, log.log_body_end_ptr_, page->GetData());
-      break;
+      ret = ParseOrApplyString(log.log_body_start_ptr_, log.log_body_end_ptr_, page->GetData());
+      return ret != nullptr;
     case MLOG_COMP_PAGE_CREATE:
-      ApplyCompPageCreate(page->GetData());
-      break;
+      ret = ApplyCompPageCreate(page->GetData());
+      return ret != nullptr;
     case MLOG_INIT_FILE_PAGE2:
-      ApplyInitFilePage2(log, page);
-      break;
+      return ApplyInitFilePage2(log, page);
     case MLOG_COMP_REC_INSERT:
-      ApplyCompRecInsert(log, page);
-      break;
+      return ApplyCompRecInsert(log, page);
     case MLOG_COMP_REC_CLUST_DELETE_MARK:
-      ApplyCompRecClusterDeleteMark(log, page);
-      break;
+      return ApplyCompRecClusterDeleteMark(log, page);
     case MLOG_REC_SEC_DELETE_MARK:
-      ApplyRecSecondDeleteMark(log, page);
-      break;
+      return ApplyRecSecondDeleteMark(log, page);
     case MLOG_COMP_REC_SEC_DELETE_MARK:
-      ApplyCompRecSecondDeleteMark(log, page);
-      break;
+      return ApplyCompRecSecondDeleteMark(log, page);
     case MLOG_COMP_REC_UPDATE_IN_PLACE:
-      ApplyCompRecUpdateInPlace(log, page);
-      break;
+      return ApplyCompRecUpdateInPlace(log, page);
     case MLOG_COMP_REC_DELETE:
-      ApplyCompRecDelete(log, page);
-      break;
+      return ApplyCompRecDelete(log, page);
     case MLOG_COMP_LIST_END_COPY_CREATED:
-      ApplyCompListEndCopyCreated(log, page);
-      break;
+      return ApplyCompListEndCopyCreated(log, page);
     case MLOG_COMP_PAGE_REORGANIZE:
-      ApplyCompPageReorganize(log, page);
-      break;
+      return ApplyCompPageReorganize(log, page);
     case MLOG_COMP_LIST_START_DELETE:
     case MLOG_COMP_LIST_END_DELETE:
-      ApplyCompListDelete(log, page);
-      break;
+      return ApplyCompListDelete(log, page);
     case MLOG_IBUF_BITMAP_INIT:
-      ApplyIBufBitmapInit(log, page);
-      break;
+      return ApplyIBufBitmapInit(log, page);
     default:
       // skip
 //      std::cout << "We can not apply " << GetLogString(log.type_) << ", just skipped." << std::endl;

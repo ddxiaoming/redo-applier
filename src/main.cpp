@@ -70,9 +70,10 @@ void test() {
   }
 }
 int main() {
-  ApplySystem applySystem(false);
+  ApplySystem applySystem(true);
   while (1) {
     applySystem.PopulateHashMap();
     applySystem.ApplyHashLogs();
   }
+//CompareLog();
 }
