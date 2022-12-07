@@ -10,6 +10,29 @@ using size_t = uint64_t;
 using byte = unsigned char;
 using trx_id_t = uint64_t;
 using roll_ptr_t = uint64_t;
+
+static constexpr int DATA_PAGE_PARTITION0 = 0;
+static constexpr int DATA_PAGE_PARTITION1 = 1;
+static constexpr int DATA_PAGE_PARTITION2 = 2;
+static constexpr int DATA_PAGE_PARTITION3 = 3;
+static constexpr int DATA_PAGE_PARTITION4 = 4;
+static constexpr int DATA_PAGE_PARTITION5 = 5;
+static constexpr int DATA_PAGE_PARTITION6 = 6;
+static constexpr int DATA_PAGE_PARTITION7 = 7;
+static constexpr int DATA_PAGE_PARTITION8 = 8;
+static constexpr int DATA_PAGE_PARTITION9 = 9;
+static constexpr int DATA_PAGE_PARTITION10 = 10;
+static constexpr int DATA_PAGE_PARTITION11 = 11;
+static constexpr int DATA_PAGE_PARTITION12 = 12;
+static constexpr int DATA_PAGE_PARTITION13 = 13;
+static constexpr int DATA_PAGE_PARTITION14 = 14;
+static constexpr int DATA_PAGE_PARTITION15 = 15;
+static constexpr int DATA_PAGE_PARTITION16 = 16;
+static constexpr int DATA_PAGE_PARTITION17 = 17;
+static constexpr int DATA_PAGE_PARTITION18 = 18;
+static constexpr int DATA_PAGE_PARTITION19 = 19;
+static constexpr int LOG_PARTITION = 20;
+static constexpr size_t PARTITION_SIZE = 256 << 20; // 256 MB
 // log block size in bytes
 static constexpr size_t LOG_BLOCK_SIZE = 512;
 

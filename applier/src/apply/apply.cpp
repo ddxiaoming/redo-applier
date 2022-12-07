@@ -2,13 +2,14 @@
 #include "applier/utility.h"
 #include "applier/buffer_pool.h"
 #include "applier/parse.h"
+#include "applier/logger.h"
 #include "applier/file_io.h"
 #include "storpu/storpu.h"
 namespace Lemon {
 
 ApplySystem::ApplySystem() {
   // 1.填充meta_data_buf
-  flash_read(0, 1, meta_data_buf_);
+  flash_read((LOG_PARTITION * PARTITION_SIZE) / FLASH_PAGE_SIZE, 1, meta_data_buf_);
 
   // 2.设置checkpoint_lsn和checkpoint_no
   uint32_t checkpoint_no_1 = mach_read_from_8(meta_data_buf_ + 1 * LOG_BLOCK_SIZE + LOG_CHECKPOINT_NO);
@@ -22,6 +23,9 @@ ApplySystem::ApplySystem() {
     checkpoint_lsn_ = mach_read_from_8(meta_data_buf_ + 3 * LOG_BLOCK_SIZE + LOG_CHECKPOINT_LSN);
     checkpoint_offset_ = mach_read_from_8(meta_data_buf_ + 3 * LOG_BLOCK_SIZE + LOG_CHECKPOINT_OFFSET);
   }
+
+  LOG_DEBUG("Initialized apply system, checkpoint_no: %d, checkpoint_lsn: %d, checkpoint_offset: %d.\n",
+            checkpoint_no_, checkpoint_lsn_, checkpoint_offset_);
 }
 
 ApplySystem::~ApplySystem() {
@@ -54,7 +58,6 @@ bool ApplySystem::PopulateHashMap() {
     flash_read(next_fetch_page_id_, 1, buf);
 
     for (int block = 0; block < static_cast<int>((DATA_PAGE_SIZE / LOG_BLOCK_SIZE)); ++block) {
-//      std::cout << "block:" << block << std::endl;
       if (next_fetch_page_id_ == 0 && block < 4) continue; // 跳过前面4个block
       auto hdr_no = ~LOG_BLOCK_FLUSH_BIT_MASK & mach_read_from_4(buf + block * LOG_BLOCK_SIZE);
       auto data_len = mach_read_from_2(buf + block * LOG_BLOCK_SIZE + LOG_BLOCK_HDR_DATA_LEN);
@@ -63,13 +66,11 @@ bool ApplySystem::PopulateHashMap() {
       auto checksum = mach_read_from_4(buf + block * LOG_BLOCK_SIZE + LOG_BLOCK_CHECKSUM);
       // 这个block还没装满
       if (data_len != 512) {
-        spu_printf("(page_id = %d, block = %d) was filled.\n", next_fetch_page_id_, block);
+        spu_printf("(page_id = %d, block = %d) was not filled.\n", next_fetch_page_id_, block);
         return false;
       }
       // 每个block的日志掐头去尾放到parse buffer中
       uint32_t len = data_len - LOG_BLOCK_HDR_SIZE - LOG_BLOCK_TRL_SIZE;
-
-      // TODO memcpy是不是能被正确的链接？
       memcpy(parse_buf_ptr_ + parse_buf_content_size_,
                   buf + block * LOG_BLOCK_SIZE + LOG_BLOCK_HDR_SIZE, len);
       parse_buf_content_size_ += len;
@@ -103,7 +104,6 @@ bool ApplySystem::PopulateHashMap() {
   parse_buf_content_size_ = end_ptr - start_ptr;
   // 双buffer切换
   parse_buf_ptr_ = parse_buf_ + (parse_buf_ptr_ - parse_buf_ + parse_buf_size_) % (parse_buf_size_ * 2);
-  // TODO memcpy是不是能被正确的链接？
   memcpy(parse_buf_ptr_, start_ptr, parse_buf_content_size_);
   return true;
 }
@@ -117,7 +117,7 @@ bool ApplySystem::ApplyHashLogs() {
 
     auto space_id = iter_begin->get<0>();
 
-    if (!(space_id >= 23 && space_id <= 42)) {
+    if (space_id != 26) {
       continue;
     }
 
@@ -129,32 +129,40 @@ bool ApplySystem::ApplyHashLogs() {
 
       // 获取需要的page
       Page *page = buffer_pool_->GetPage(space_id, page_id);
-
-      if (page == nullptr) continue;
+      LOG_DEBUG("fetch one page from buffer pool, space_id = %d, page_id = %d, page_lsn = %d.\n",
+                page->GetSpaceId(), page->GetPageId(), page->GetLSN());
 
       lsn_t page_lsn = page->GetLSN();
 
       auto &log_list = iter2_begin->get<1>();
       while (!log_list.empty()) {
         auto &log = log_list.front();
+
+        if (log.type_ == LOG_TYPE::MLOG_COMP_PAGE_CREATE) {
+          page = buffer_pool_->NewPage(space_id, page_id);
+          LOG_DEBUG("create new page from buffer pool, space_id = %d, page_id = %d, page_lsn = %d.\n",
+                    page->GetSpaceId(), page->GetPageId(), page->GetLSN());
+        }
+
         lsn_t log_lsn = log.log_start_lsn_;
-        if (log_lsn <= checkpoint_lsn_) {
-          continue;
-        }
-        // skip!
-        if (page_lsn > log_lsn) {
-          continue;
-        }
+//        // 从checkpoint点之后开始apply
+//        if (log_lsn <= checkpoint_lsn_) {
+//          continue;
+//        }
+//        // skip!
+//        if (page_lsn > log_lsn) {
+//          continue;
+//        }
 
         if (ApplyOneLog(page, log)) {
           page->WritePageLSN(log_lsn + log.log_len_);
           page->WriteCheckSum(BUF_NO_CHECKSUM_MAGIC);
+          LOG_DEBUG("applied one log type = %s, space_id = %d, page_id = %d, log_len = %d, lsn = %d.\n",
+                    GetLogString(log.type_), log.space_id_, log.page_id_, log.log_len_, log.log_start_lsn_);
         } else {
-//          std::cout << "Skip." << std::endl;
+          LOG_DEBUG("unsupported log type = %s, space_id = %d, page_id = %d, log_len = %d, lsn = %d, skip apply.\n",
+                    GetLogString(log.type_), log.space_id_, log.page_id_, log.log_len_, log.log_start_lsn_);
         }
-
-        spu_printf("applied type = %s, space_id = %d, page_id = %d, , data_len = %d, lsn = %d.\n",
-                   GetLogString(log.type_), log.space_id_, log.page_id_, log.log_len_, log.log_start_lsn_);
         log_list.pop_front();
       }
     }
