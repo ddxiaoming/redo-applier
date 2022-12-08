@@ -2969,6 +2969,7 @@ uint32_t ParseSingleLogRecord(LOG_TYPE &type,
 
   // 1. 特殊的log特殊处理
   type = static_cast<LOG_TYPE>(mach_read_from_1(new_ptr));
+  LOG_DEBUG("type = %s\n", GetLogString(type));
   // MLOG_MULTI_REC_END、LOG_TYPE::MLOG_DUMMY_RECORD、LOG_TYPE::MLOG_CHECKPOINT三种log具有固定的长度
   if (type == LOG_TYPE::MLOG_MULTI_REC_END || type ==  LOG_TYPE::MLOG_DUMMY_RECORD) {
     return 1;

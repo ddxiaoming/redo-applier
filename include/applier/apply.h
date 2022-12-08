@@ -43,7 +43,7 @@ private:
       hash_map_{frg::hash<Key1Type>{}};
 
   // parse buffer size in bytes
-  uint32_t parse_buf_size_ {10 * 1024 * 1024}; // 10M
+  uint32_t parse_buf_size_ {2 * 1024 * 1024}; // 2M
 
   // 左半边与右半边组成一个双buffer，防止某一个buffer中的log还没有被apply就被覆盖了
   byte *parse_buf_ {(byte *) mmap(nullptr,
@@ -63,12 +63,19 @@ private:
   uint32_t meta_data_buf_size_ {DATA_PAGE_SIZE}; // 这个值不能给小了，flash 最小要读1个page上来
 
   // 存储redo log file的前4个字节
-  unsigned char *meta_data_buf_ {(byte *) mmap(nullptr,
+  byte *meta_data_buf_ {(byte *) mmap(nullptr,
                                                meta_data_buf_size_,
                                                PROT_READ | PROT_WRITE,
                                                MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE | MAP_CONTIG,
                                                -1,
                                                0)};
+
+  byte *page_buf_ = (byte *) mmap(nullptr,
+                            DATA_PAGE_SIZE,
+                            PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE | MAP_CONTIG,
+                            -1,
+                            0);
 
   lsn_t checkpoint_lsn_ {0};
 
@@ -79,11 +86,11 @@ private:
   uint64_t log_file_size_ {1 * 1024 * 1024 * 1024}; // 1G
 
   // 下次取出log file中这个log block no代表的block到log_buf_中
-  uint32_t next_fetch_page_id_{0};
+  uint32_t next_fetch_page_id_ {LOG_PARTITION_START_LPA};
   // 如果这个值不为-1，说明某一次解析日志时，page内有剩余没有解析完成的日志，下次需要把这个page解析完成
   int next_fetch_block_{-1};
 
-  uint32_t log_max_page_id_ {static_cast<uint32_t>((log_file_size_ / DATA_PAGE_SIZE))};
+  uint32_t log_max_page_id_ {static_cast<uint32_t>((PARTITION_SIZE * LOG_PARTITION + log_file_size_) / DATA_PAGE_SIZE)};
 
   // 产生的所有日志都已经apply完了
   bool finished_ {false};

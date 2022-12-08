@@ -5,7 +5,7 @@ namespace frg {
 
 struct stl_allocator {
   static void *allocate(size_t size) {
-    return ::malloc(size);
+    return malloc(size);
     //		return operator new(size);
   }
 

@@ -101,15 +101,10 @@ private:
   using Key1Type = space_id_t;
   using Key2Type = page_id_t;
   using Key2ValueType = frg::hash_map<Key2Type, LruListType::iterator>;
-  frg::hash_map<Key1Type, Key2ValueType> hash_map_{};
+  frg::hash_map<Key1Type, Key2ValueType> hash_map_ {};
 
 
-  Page *buffer_ {(Page *) mmap(nullptr,
-                               BUFFER_POOL_SIZE,
-                               PROT_READ | PROT_WRITE,
-                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE | MAP_CONTIG,
-                               -1,
-                               0)};
+  Page *buffer_ {(Page *) malloc(sizeof(Page) * BUFFER_POOL_SIZE)};
 
   // space_id -> 起始LPA的映射表
   frg::hash_map<uint32_t, uint32_t> space_id_2_start_lpa_ {};

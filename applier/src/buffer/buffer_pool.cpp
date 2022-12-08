@@ -31,23 +31,45 @@ Page::Page(const Page &other) :
 
 BufferPool::BufferPool() {
 
+  LOG_DEBUG("start initialize buffer pool.\n");
   // 1. 构建映射表
-  space_id_2_start_lpa_.insert(0, 0);
-
+  space_id_2_start_lpa_.insert(26, (DATA_PAGE_PARTITION0 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(27, (DATA_PAGE_PARTITION1 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(28, (DATA_PAGE_PARTITION2 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(29, (DATA_PAGE_PARTITION3 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(30, (DATA_PAGE_PARTITION4 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(31, (DATA_PAGE_PARTITION5 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(32, (DATA_PAGE_PARTITION6 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(33, (DATA_PAGE_PARTITION7 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(34, (DATA_PAGE_PARTITION8 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(35, (DATA_PAGE_PARTITION9 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(36, (DATA_PAGE_PARTITION10 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(37, (DATA_PAGE_PARTITION11 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(38, (DATA_PAGE_PARTITION12 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(39, (DATA_PAGE_PARTITION13 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(40, (DATA_PAGE_PARTITION14 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(41, (DATA_PAGE_PARTITION15 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(42, (DATA_PAGE_PARTITION16 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(43, (DATA_PAGE_PARTITION17 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(44, (DATA_PAGE_PARTITION18 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(45, (DATA_PAGE_PARTITION19 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  LOG_DEBUG("initialized space_id_2_start_lpa_.\n");
 
   // 2. 初始化free_list_
   for (int i = 0; i < static_cast<int>(BUFFER_POOL_SIZE); ++i) {
     free_list_.emplace_back(i);
   }
-
+  LOG_DEBUG("initialized free_list_.\n");
   // 3. 初始化frame_id_2_page_address_
-  frame_id_2_page_address_.resize(BUFFER_POOL_SIZE/ DATA_PAGE_SIZE);
+  frame_id_2_page_address_.resize(BUFFER_POOL_SIZE);
+  LOG_DEBUG("resized frame_id_2_page_address_.\n");
+  LOG_DEBUG("Initialized buffer pool.\n");
 }
 
 
 BufferPool::~BufferPool() {
   if (buffer_ != nullptr) {
-    munmap(buffer_, BUFFER_POOL_SIZE);
+    free(buffer_);
     buffer_ = nullptr;
   }
 }
@@ -130,7 +152,6 @@ Page *BufferPool::GetPage(space_id_t space_id, page_id_t page_id) {
   }
 
   // 不在buffer pool中，从磁盘读
-  // TODO 假定所有的Page在磁盘上都是存在的
   return ReadPageFromDisk(space_id, page_id);
 }
 
@@ -168,7 +189,7 @@ bool BufferPool::WriteBack(space_id_t space_id, page_id_t page_id) {
     return true;
   }
 
-  LOG_DEBUG("Page(space_id = %d, page_id = %d) is not in buffer pool.\n", space_id, page_id);
+  LOG_DEBUG("page(space_id = %d, page_id = %d) is not in buffer pool. can not write back to ssd.\n", space_id, page_id);
   return false;
 }
 
