@@ -5,15 +5,14 @@
 namespace Lemon {
 
 Page::Page() :
-    data_(new unsigned char[DATA_PAGE_SIZE]),
+    data_((byte *) malloc(DATA_PAGE_SIZE)),
     state_(State::INVALID) {
 
 }
 
 Page::~Page() {
   if (data_ != nullptr) {
-    delete[] data_;
-    data_ = nullptr;
+    free(data_);
   }
 }
 
@@ -32,8 +31,12 @@ Page::Page(const Page &other) :
 BufferPool::BufferPool() {
 
   LOG_DEBUG("start initialize buffer pool.\n");
+  // 0.
+  for (int i = 0; i < BUFFER_POOL_SIZE; ++i) {
+    new (&buffer_[i]) (Page);
+  }
   // 1. 构建映射表
-  space_id_2_start_lpa_.insert(26, (DATA_PAGE_PARTITION0 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
+  space_id_2_start_lpa_.insert(23, (DATA_PAGE_PARTITION0 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
   space_id_2_start_lpa_.insert(27, (DATA_PAGE_PARTITION1 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
   space_id_2_start_lpa_.insert(28, (DATA_PAGE_PARTITION2 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
   space_id_2_start_lpa_.insert(29, (DATA_PAGE_PARTITION3 * PARTITION_SIZE) / FLASH_PAGE_SIZE);
@@ -139,6 +142,7 @@ Page *BufferPool::GetPage(space_id_t space_id, page_id_t page_id) {
   // 该 page 已经被lru缓存了
   if (hash_map_.find(space_id) != hash_map_.end()
       && hash_map_[space_id].find(page_id) != hash_map_[space_id].end()) {
+    LOG_DEBUG("space id = %d, page id = %d was buffered in buffer pool, return directly.\n", space_id, page_id);
     auto iter = hash_map_[space_id][page_id];
     auto frame_id = (*hash_map_[space_id][page_id])->object;
 
@@ -152,31 +156,43 @@ Page *BufferPool::GetPage(space_id_t space_id, page_id_t page_id) {
   }
 
   // 不在buffer pool中，从磁盘读
+  LOG_DEBUG("space id = %d, page id = %d was not buffered, start read from disk.\n", space_id, page_id);
   return ReadPageFromDisk(space_id, page_id);
 }
 
 Page *BufferPool::ReadPageFromDisk(space_id_t space_id, page_id_t page_id) {
 
+  LOG_DEBUG("1\n");
   if (free_list_.empty()) {
     // buffer pool 空间不够
     Evict(64);
   }
-
+  LOG_DEBUG("2\n");
   // 从free list中分配一个frame，从磁盘读取page，填充这个frame
   frame_id_t frame_id = free_list_.front();
+  LOG_DEBUG("3\n");
   auto start_lpa = space_id_2_start_lpa_[space_id];
+  LOG_DEBUG("4, page id = %d, start lpa = %d\n", page_id, start_lpa);
   flash_read(page_id + start_lpa, 1, buffer_[frame_id].GetData());
+  LOG_DEBUG("5\n");
   buffer_[frame_id].SetState(Page::State::FROM_DISK);
+  LOG_DEBUG("6\n");
   free_list_.pop_front();
+  LOG_DEBUG("7\n");
 
   MY_ASSERT(frame_id_2_page_address_[frame_id].in_lru_ == false);
-
+  LOG_DEBUG("8\n");
   // 将page放入lru list
   frame_id_2_page_address_[frame_id].space_id_ = space_id;
+  LOG_DEBUG("9\n");
   frame_id_2_page_address_[frame_id].page_id_ = page_id;
+  LOG_DEBUG("10\n");
   frame_id_2_page_address_[frame_id].in_lru_ = true;
+  LOG_DEBUG("11\n");
   lru_list_.emplace_front(frame_id);
+  LOG_DEBUG("12\n");
   hash_map_[space_id][page_id] = lru_list_.begin();
+  LOG_DEBUG("13\n");
   return &buffer_[frame_id];
 }
 

@@ -40,7 +40,6 @@ ApplySystem::~ApplySystem() {
 
 bool ApplySystem::PopulateHashMap() {
 
-
   if (next_fetch_page_id_ > log_max_page_id_) {
     spu_printf("we have processed all redo log.\n");
     return false;
@@ -120,20 +119,24 @@ bool ApplySystem::ApplyHashLogs() {
   auto iter_begin = hash_map_.begin();
   auto iter_end = hash_map_.end();
 
+  LOG_DEBUG("hash map size: %d\n", hash_map_.size());
+  int itered_hash_size = 0;
   for (; iter_begin != iter_end; ++iter_begin) {
-
+    LOG_DEBUG("itered_hash_size: %d\n", ++itered_hash_size);
     auto space_id = iter_begin->get<0>();
 
-    if (space_id != 26) {
+    if (space_id != 23) {
       continue;
     }
 
     auto iter2_begin = iter_begin->get<1>().begin();
     auto iter2_end = iter_begin->get<1>().end();
+    LOG_DEBUG("page hash map size: %d\n", iter_begin->get<1>().size());
+    int itered_page_hash_size = 0;
     for ( ; iter2_begin != iter2_end; ++iter2_begin) {
-
+      LOG_DEBUG("itered_page_hash_size: %d\n", ++itered_page_hash_size);
       auto page_id = iter2_begin->get<0>();
-
+      LOG_DEBUG("start fetch page, space_id = %d, page_id = %d.\n", space_id, page_id);
       // 获取需要的page
       Page *page = buffer_pool_->GetPage(space_id, page_id);
       LOG_DEBUG("fetch one page from buffer pool, space_id = %d, page_id = %d, page_lsn = %d.\n",
@@ -145,11 +148,12 @@ bool ApplySystem::ApplyHashLogs() {
       while (!log_list.empty()) {
         auto &log = log_list.front();
 
-        if (log.type_ == LOG_TYPE::MLOG_COMP_PAGE_CREATE) {
-          page = buffer_pool_->NewPage(space_id, page_id);
-          LOG_DEBUG("create new page from buffer pool, space_id = %d, page_id = %d, page_lsn = %d.\n",
-                    page->GetSpaceId(), page->GetPageId(), page->GetLSN());
-        }
+//        if (log.type_ == LOG_TYPE::MLOG_COMP_PAGE_CREATE) {
+//          LOG_DEBUG("start create new page.\n");
+//          page = buffer_pool_->NewPage(space_id, page_id);
+//          LOG_DEBUG("create new page from buffer pool, space_id = %d, page_id = %d, page_lsn = %d.\n",
+//                    page->GetSpaceId(), page->GetPageId(), page->GetLSN());
+//        }
 
         lsn_t log_lsn = log.log_start_lsn_;
 //        // 从checkpoint点之后开始apply
@@ -171,6 +175,10 @@ bool ApplySystem::ApplyHashLogs() {
                     GetLogString(log.type_), log.space_id_, log.page_id_, log.log_len_, log.log_start_lsn_);
         }
         log_list.pop_front();
+        LOG_DEBUG("poped log from list, after pop, list is ");
+        bool is_empty = log_list.empty();
+        if (is_empty) LOG_DEBUG("empty.\n");
+        else LOG_DEBUG("not empty.\n");
       }
     }
   }
